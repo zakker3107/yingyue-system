@@ -1,0 +1,4 @@
+interface:
+  display_name: "Yingyue Daily Ops"
+  short_description: "Run Yingyue daily pipeline and health ops"
+  default_prompt: "Run the Yingyue daily workflow with project scripts, then report outputs and any failures."

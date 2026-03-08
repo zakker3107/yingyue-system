@@ -1,0 +1,34 @@
+﻿# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local tooling / IDE
+.vscode/
+.gcloud/
+
+# Temporary runtime folders
+.pytest_tmp/
+codex_tmp_pytest/
+pytest-cache-files-*/
+
+# Logs and local artifacts
+*.log
+
+# Data artifacts
+data/raw/
+data/processed/
+data/curated/*.db
+data/curated/*.db-shm
+data/curated/*.db-wal
+
+# Third-party vendored code
+vendor/
+tools/gcloud-config/
+tools/google-cloud-sdk/
+tools/google-cloud-cli.zip

@@ -1,0 +1,18 @@
+{
+  "build": {
+    "builder": "dockerfile"
+  },
+  "deploy": {
+    "startCommand": "python -m uvicorn services.api.main:app --host 0.0.0.0 --port $PORT",
+    "healthcheckPath": "/health",
+    "healthcheckTimeout": 300,
+    "restartPolicyType": "ON_FAILURE",
+    "restartPolicyMaxRetries": 10
+  },
+  "volumes": [
+    {
+      "name": "yingyue-data",
+      "mountPath": "/app/data"
+    }
+  ]
+}

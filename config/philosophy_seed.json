@@ -1,0 +1,67 @@
+[
+  {
+    "title": "Plato - Theory of Forms",
+    "author": "Plato",
+    "school": "Ancient Greek",
+    "era": "Classical",
+    "summary": "Reality has intelligible forms beyond sensory appearances.",
+    "keywords": [
+      "metaphysics",
+      "epistemology",
+      "forms",
+      "reality"
+    ]
+  },
+  {
+    "title": "Aristotle - Virtue Ethics",
+    "author": "Aristotle",
+    "school": "Ancient Greek",
+    "era": "Classical",
+    "summary": "Ethical excellence is formed through habits and practical wisdom.",
+    "keywords": [
+      "ethics",
+      "virtue",
+      "habit",
+      "eudaimonia"
+    ]
+  },
+  {
+    "title": "Kant - Categorical Imperative",
+    "author": "Immanuel Kant",
+    "school": "German Idealism",
+    "era": "Modern",
+    "summary": "Moral action should follow universalizable principles.",
+    "keywords": [
+      "ethics",
+      "duty",
+      "reason",
+      "autonomy"
+    ]
+  },
+  {
+    "title": "Nietzsche - Genealogy of Morals",
+    "author": "Friedrich Nietzsche",
+    "school": "Existential Precursors",
+    "era": "Modern",
+    "summary": "Moral values emerge historically from power relations and ressentiment.",
+    "keywords": [
+      "morality",
+      "power",
+      "history",
+      "critique"
+    ]
+  },
+  {
+    "title": "Confucius - Ren and Li",
+    "author": "Confucius",
+    "school": "Confucianism",
+    "era": "Ancient",
+    "summary": "Humaneness and ritual propriety stabilize social harmony.",
+    "keywords": [
+      "ethics",
+      "society",
+      "ritual",
+      "virtue"
+    ]
+  }
+]
