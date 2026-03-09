@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
@@ -30,7 +30,7 @@ def _latest_news_for_agents(limit: int = 20) -> list[dict[str, str]]:
             """
             SELECT title, source, topic, published_at, summary, link
             FROM news_items
-            ORDER BY datetime(published_at) DESC
+            ORDER BY published_at DESC
             LIMIT ?
             """,
             (limit,),

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import argparse
 import importlib.util
@@ -16,7 +16,7 @@ from activity_rules_runtime import active_rule_ids, load_rules
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 VENV_PYTHON = PROJECT_ROOT / ".venv" / "Scripts" / "python.exe"
 REPORT_DIR = PROJECT_ROOT / "data" / "processed" / "reports"
-TASK_NAME = "YingYue-Daily-MVP"
+TASK_NAME = os.getenv("YINGYUE_TASK_NAME", "YingYue-Daily-Ops")
 
 
 def to_console_text(value: object) -> str:

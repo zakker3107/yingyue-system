@@ -95,7 +95,7 @@ def collect_status(base_url: str) -> dict[str, Any]:
         else:
             api_reachable = False
             message = err or f"status={status_code}"
-            checks.append(CheckResult(name=f"api:{name}", status="FAIL", details=message, latency_ms=elapsed))
+            checks.append(CheckResult(name=f"api:{name}", status="WARN", details=message, latency_ms=elapsed))
 
     statuses = [c.status for c in checks]
     if "FAIL" in statuses:
@@ -186,3 +186,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+

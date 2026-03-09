@@ -1,4 +1,4 @@
-"""性能優化版本的新聞爬蟲 - 並發、快取、批量操作"""
+﻿"""Optimized concurrent RSS ingestion with bounded deduplication."""
 
 from __future__ import annotations
 
@@ -18,10 +18,9 @@ from services.core.settings import RAW_NEWS_PATH, SOURCES_CONFIG
 from services.core.storage import db_connection
 
 
-# 簡單的記憶體快取 (TTL: 10 分鐘)
 _cache = {}
 _cache_lock = threading.Lock()
-CACHE_TTL = 600  # 秒
+CACHE_TTL = 600
 
 
 def _load_config() -> dict[str, Any]:
@@ -42,7 +41,6 @@ def _normalize_published(raw: str | None) -> str:
 
 
 def _get_cached(key: str) -> Any | None:
-    """從快取中獲取數據"""
     with _cache_lock:
         if key in _cache:
             value, expires_at = _cache[key]
@@ -53,7 +51,6 @@ def _get_cached(key: str) -> Any | None:
 
 
 def _set_cache(key: str, value: Any, ttl: int = CACHE_TTL) -> None:
-    """設定快取數據"""
     with _cache_lock:
         _cache[key] = (value, time.time() + ttl)
 
@@ -81,25 +78,23 @@ def _fallback_items() -> list[dict[str, str]]:
 
 
 def _fetch_url(url: str, timeout: int) -> bytes | None:
-    """優化：使用快取減少重複請求"""
     cache_key = f"url:{md5(url.encode()).hexdigest()}"
     cached = _get_cached(cache_key)
     if cached:
         return cached
-    
+
     try:
         ctx = ssl.create_default_context()
         req = urllib.request.Request(url, headers={"User-Agent": "YingYueMVP/0.1"})
         with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
             data = resp.read()
-            _set_cache(cache_key, data, ttl=300)  # 5 分鐘快取
+            _set_cache(cache_key, data, ttl=300)
             return data
     except Exception:
         return None
 
 
 def _parse_rss(xml_bytes: bytes, source_name: str, topic: str, max_items: int) -> list[dict[str, str]]:
-    """優化：改進 XML 解析性能"""
     try:
         root = ET.fromstring(xml_bytes)
     except ET.ParseError:
@@ -107,40 +102,61 @@ def _parse_rss(xml_bytes: bytes, source_name: str, topic: str, max_items: int) -
 
     items: list[dict[str, str]] = []
     item_count = 0
-    
+
     for item in root.findall(".//item"):
         if item_count >= max_items:
             break
-            
+
         title = (item.findtext("title") or "Untitled").strip()
         link = (item.findtext("link") or "").strip()
         pub_date = item.findtext("pubDate") or item.findtext("published") or item.findtext("updated")
         summary = (item.findtext("description") or item.findtext("summary") or "").strip()
 
-        if title and link:  # 只保存有效項目
-            items.append({
-                "title": title,
-                "link": link,
-                "source": source_name,
-                "topic": topic,
-                "published_at": _normalize_published(pub_date),
-                "summary": summary[:500],
-            })
+        if title and link:
+            items.append(
+                {
+                    "title": title,
+                    "link": link,
+                    "source": source_name,
+                    "topic": topic,
+                    "published_at": _normalize_published(pub_date),
+                    "summary": summary[:500],
+                }
+            )
             item_count += 1
-    
+
     return items
 
 
+def _dedupe_news_batch(items: list[dict[str, str]]) -> list[dict[str, str]]:
+    deduped: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+
+    for item in items:
+        key = (
+            str(item.get("source") or "").strip(),
+            str(item.get("title") or "").strip(),
+            str(item.get("published_at") or "").strip(),
+        )
+        if not all(key):
+            deduped.append(item)
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+
+    return deduped
+
+
 def collect_news_concurrent() -> list[dict[str, str]]:
-    """優化：並發爬蟲，使用 ThreadPoolExecutor"""
     config = _load_config()
     sources = config.get("news_sources", [])
     max_items = int(config.get("collection", {}).get("max_items_per_source", 20))
     timeout_seconds = int(config.get("collection", {}).get("timeout_seconds", 8))
-    max_workers = min(len(sources), 5)  # 最多 5 個並發線程
+    max_workers = max(1, min(len(sources), 5))
 
-    collected: list[dict[str, str]] = []
-    results = []
+    results: list[dict[str, str]] = []
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = {
@@ -150,23 +166,23 @@ def collect_news_concurrent() -> list[dict[str, str]]:
             }
             for source in sources
         }
-        
+
         for future in as_completed(futures):
             source_info = futures[future]
             xml_data = future.result()
-            
-            if xml_data:
-                items = _parse_rss(
+            if not xml_data:
+                continue
+            results.extend(
+                _parse_rss(
                     xml_data,
                     source_name=source_info["source"],
                     topic=source_info["topic"],
                     max_items=max_items,
                 )
-                results.extend(items)
+            )
 
-    collected = results if results else _fallback_items()
+    collected = _dedupe_news_batch(results) if results else _fallback_items()
 
-    # 優化：直接寫文件，不需額外排序
     RAW_NEWS_PATH.parent.mkdir(parents=True, exist_ok=True)
     with RAW_NEWS_PATH.open("w", encoding="utf-8") as f:
         json.dump(collected, f, ensure_ascii=False, indent=2)
@@ -175,26 +191,27 @@ def collect_news_concurrent() -> list[dict[str, str]]:
 
 
 def store_news_optimized(items: list[dict[str, str]]) -> int:
-    """優化：使用 INSERT OR REPLACE 替代 DELETE + INSERT"""
+    deduped_items = _dedupe_news_batch(items)
     with db_connection() as conn:
-        # 先清理超過 7 天的舊新聞
         cutoff_date = (datetime.now(timezone.utc) - timedelta(days=7)).isoformat()
         conn.execute("DELETE FROM news_items WHERE published_at < ?", (cutoff_date,))
-        
-        # 使用 INSERT OR REPLACE 替代 DELETE
         conn.executemany(
             """
-            INSERT OR REPLACE INTO news_items(title, link, source, topic, published_at, summary, inserted_at)
+            INSERT INTO news_items(title, link, source, topic, published_at, summary, inserted_at)
             VALUES(:title, :link, :source, :topic, :published_at, :summary, CURRENT_TIMESTAMP)
+            ON CONFLICT(source, title, published_at) DO UPDATE SET
+                link = excluded.link,
+                topic = excluded.topic,
+                summary = excluded.summary,
+                inserted_at = CURRENT_TIMESTAMP
             """,
-            items,
+            deduped_items,
         )
         conn.commit()
-    
-    return len(items)
+
+    return len(deduped_items)
 
 
 def run_news_ingestion() -> int:
-    """改進的新聞爬蟲管道"""
-    items = collect_news_concurrent()  # 使用並發版本
-    return store_news_optimized(items)  # 使用優化的存儲
+    items = collect_news_concurrent()
+    return store_news_optimized(items)

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import csv
 from collections import Counter
@@ -24,7 +24,7 @@ def _fetch_news(limit: int = 10) -> list[dict[str, str]]:
             """
             SELECT title, source, topic, published_at, summary, link
             FROM news_items
-            ORDER BY datetime(published_at) DESC
+            ORDER BY published_at DESC
             LIMIT ?
             """,
             (raw_limit,),

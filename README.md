@@ -1,4 +1,4 @@
-﻿# 影月系統 MVP
+# 影月系統 MVP
 
 影月系統（YingYue System）是一個 AI 觀察系統，聚焦三條主線：
 - 世界趨勢與新聞整理
@@ -95,7 +95,7 @@ start_api.bat        # 啟動 API 服務
 | 快速執行 | 批處理腳本 | `run_mvp.bat` |
 | IDE 集成 | VS Code 任務 | `Ctrl+Shift+P` → `Run MVP` |
 | 手動控制 | 直接調用 | `python scripts\run_mvp.py` |
-| 自動執行 | 排程任務 | `install_daily_task.bat` |
+| 自動執行 | 排程任務（MVP + 健康檢查 + 狀態報表） | `install_daily_task.bat` |
 | API 查詢 | HTTP 請求 | `curl http://127.0.0.1:8000/health` |
 
 ---
@@ -144,7 +144,7 @@ run_mvp.bat              # 運行 MVP 管線
 start_api.bat            # 啟動 API 服務器
 run_tests.bat            # 運行測試
 optimize_system.bat      # 環境優化 + 執行 MVP
-install_daily_task.bat   # 安裝每日排程
+install_daily_task.bat   # 安裝每日排程（報表 + 系統檢查）
 remove_daily_task.bat    # 移除每日排程
 ```
 
@@ -251,6 +251,9 @@ A：最小可行產品（Minimum Viable Product），包含 Scout、Analyst、Sy
 
 **Q：如何修改自動排程時間？**  
 A：編輯 `install_daily_task.bat`，改變 `-Time "08:30"` 參數
+
+**Q：每日排程現在會做什麼？**  
+A：依序執行 `python scripts\run_mvp.py`、`python scripts\generate_daily_report.py`、`python scripts\health_check.py --run-smoke`，最後固定產出 `data\processed\reports\status_report.md`
 
 **Q：報告生成失敗怎麼辦？**  
 A：檢查 `data/curated/yingyue.db` 是否存在，或執行 `python scripts\optimize_environment.py --full` 重建

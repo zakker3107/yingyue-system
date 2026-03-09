@@ -1,0 +1,162 @@
+﻿<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>影月網路資訊站</title>
+  <style>
+    :root {
+      --bg: #f2f4ef;
+      --ink: #0f172a;
+      --muted: #475569;
+      --brand: #0f766e;
+      --accent: #d97706;
+      --card: #ffffff;
+      --ring: #cbd5e1;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", "Noto Sans TC", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 20% 10%, #d1fae5 0%, transparent 40%),
+        radial-gradient(circle at 90% 20%, #ffedd5 0%, transparent 35%),
+        var(--bg);
+      min-height: 100vh;
+    }
+    .wrap { max-width: 1080px; margin: 0 auto; padding: 24px 16px 36px; }
+    .hero {
+      background: linear-gradient(135deg, #0f766e 0%, #115e59 60%, #0f172a 100%);
+      border-radius: 20px;
+      color: #f8fafc;
+      padding: 22px;
+      box-shadow: 0 10px 30px rgba(15, 23, 42, 0.2);
+    }
+    .hero h1 { margin: 0; font-size: clamp(1.4rem, 3vw, 2rem); letter-spacing: 0.03em; }
+    .hero p { margin: 10px 0 0; opacity: 0.9; }
+    .grid {
+      margin-top: 16px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--ring);
+      border-radius: 14px;
+      padding: 14px;
+      box-shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+    }
+    .label { color: var(--muted); font-size: 0.88rem; }
+    .value { font-size: 1.5rem; margin-top: 6px; font-weight: 700; color: var(--brand); }
+    .section { margin-top: 16px; }
+    .section h2 { margin: 0 0 10px; font-size: 1.05rem; color: #1e293b; }
+    .list { display: grid; gap: 8px; }
+    .item {
+      background: #fff;
+      border-left: 5px solid var(--accent);
+      padding: 10px 12px;
+      border-radius: 8px;
+      border: 1px solid #e2e8f0;
+    }
+    .item strong { display: block; }
+    .hint { color: var(--muted); font-size: 0.86rem; margin-top: 12px; }
+    .error { color: #991b1b; font-weight: 600; }
+    a { color: var(--brand); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <section class="hero">
+      <h1>影月網路資訊站</h1>
+      <p>整合新聞、趨勢、網路事件與報告輸出，供每日自動化前快速巡檢。</p>
+      <p id="generatedAt" class="hint">載入中...</p>
+    </section>
+
+    <section class="grid" id="stats"></section>
+
+    <section class="section">
+      <h2>最新新聞</h2>
+      <div class="item" id="latestNews">載入中...</div>
+    </section>
+
+    <section class="section">
+      <h2>前五名趨勢</h2>
+      <div class="list" id="trends"></div>
+    </section>
+
+    <section class="section">
+      <h2>報告檔案</h2>
+      <div class="list" id="reports"></div>
+    </section>
+  </main>
+
+  <script>
+    async function loadStation() {
+      const stats = document.getElementById('stats');
+      const latestNews = document.getElementById('latestNews');
+      const trends = document.getElementById('trends');
+      const reports = document.getElementById('reports');
+      const generatedAt = document.getElementById('generatedAt');
+
+      try {
+        const res = await fetch('/station/summary', { cache: 'no-store' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+
+        generatedAt.textContent = 'Generated at: ' + (data.generated_at || '-');
+
+        const countItems = [
+          ['新聞筆數', data.counts?.news_count ?? 0],
+          ['趨勢快照', data.counts?.trend_count ?? 0],
+          ['哲學條目', data.counts?.philosophy_count ?? 0],
+          ['活躍事件', data.counts?.active_event_count ?? 0]
+        ];
+        stats.innerHTML = countItems.map(([label, value]) => `
+          <article class="card">
+            <div class="label">${label}</div>
+            <div class="value">${value}</div>
+          </article>
+        `).join('');
+
+        if (data.latest_news) {
+          latestNews.innerHTML = `
+            <strong>${data.latest_news.title}</strong>
+            <span class="label">${data.latest_news.source} · ${data.latest_news.topic} · ${data.latest_news.published_at || ''}</span>
+          `;
+        } else {
+          latestNews.textContent = '尚無新聞資料';
+        }
+
+        trends.innerHTML = (data.top_trends || []).map((t) => `
+          <div class="item">
+            <strong>${t.metric_name}: ${Number(t.metric_value).toFixed(2)}</strong>
+            <span class="label">bucket: ${t.bucket || '-'} · ${t.captured_at || '-'}</span>
+          </div>
+        `).join('') || '<div class="item">尚無趨勢資料</div>';
+
+        const reportEntries = Object.entries(data.reports || {});
+        reports.innerHTML = reportEntries.map(([k, v]) => {
+          if (v.error) return `<div class="item"><strong>${k}</strong><span class="error">${v.error}</span></div>`;
+          return `
+            <div class="item">
+              <strong>${k}: ${v.filename}</strong>
+              <span class="label">${v.updated_at || "-"} | ${v.path}</span>
+            </div>
+          `;
+        }).join('') || '<div class="item">尚無報告資料</div>';
+      } catch (err) {
+        stats.innerHTML = '<div class="item"><span class="error">資訊站資料載入失敗</span></div>';
+        latestNews.innerHTML = '<span class="error">請確認 API 正常運作</span>';
+        trends.innerHTML = '';
+        reports.innerHTML = '';
+        generatedAt.textContent = String(err);
+      }
+    }
+
+    loadStation();
+  </script>
+</body>
+</html>
