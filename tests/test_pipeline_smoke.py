@@ -19,6 +19,9 @@ def test_pipeline_smoke():
     assert Path(result["daily_report"]["news_csv"]).exists()
     assert Path(result["daily_report"]["weekly_observation"]).exists()
     assert Path(result["daily_report"]["thought_links"]).exists()
+    assert "strategic_report" in result
+    assert Path(result["strategic_report"]["strategic_report"]).exists()
+    assert Path(result["strategic_report"]["strategic_report_latest"]).exists()
     assert "agent_pipeline" in result
     assert "agent_output" in result
     assert Path(result["agent_output"]["agent_json"]).exists()

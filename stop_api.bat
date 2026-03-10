@@ -1,10 +1,14 @@
 @echo off
 setlocal
-for /f "tokens=5" %%P in ('netstat -ano ^| findstr /R /C:":8000 .*LISTENING"') do (
-  echo [STOP] PID=%%P
-  taskkill /PID %%P /F >nul 2>&1
+cd /d "%~dp0"
+
+set "PY=%~dp0.venv\Scripts\python.exe"
+if not exist "%PY%" (
+  echo [ERROR] Python venv not found: %PY%
+  echo Run: python scripts\optimize_environment.py
+  exit /b 1
 )
 
-echo [DONE] Requested stop for listeners on port 8000.
-endlocal
-pause
+"%PY%" scripts\stop_api_background.py
+set "EXITCODE=%ERRORLEVEL%"
+endlocal & exit /b %EXITCODE%

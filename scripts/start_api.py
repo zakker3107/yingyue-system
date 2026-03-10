@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import gzip
 import json
@@ -121,6 +121,10 @@ class YingYueHandler(BaseHTTPRequestHandler):
             payload = api.latest_thought_links()
             self._send_json(payload, status=404 if "error" in payload else 200)
             return
+        if parsed.path == "/strategic-report/latest":
+            payload = api.latest_strategic_report()
+            self._send_json(payload, status=404 if "error" in payload else 200)
+            return
         if parsed.path == "/agents/latest":
             payload = api.latest_agent_pipeline()
             self._send_json(payload, status=404 if "error" in payload else 200)
@@ -179,3 +183,5 @@ if __name__ == "__main__":
     host = os.getenv("YINGYUE_API_HOST", "127.0.0.1")
     port = int(os.getenv("YINGYUE_API_PORT", "8000"))
     run_server(host=host, port=port)
+
+

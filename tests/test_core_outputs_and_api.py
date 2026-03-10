@@ -58,15 +58,27 @@ def test_daily_report_files_exist_and_have_header():
     csv_path = Path(daily_report["news_csv"])
     weekly_path = Path(daily_report["weekly_observation"])
     thought_path = Path(daily_report["thought_links"])
+    strategic_path = Path(result["strategic_report"]["strategic_report"])
 
     assert md_path.exists()
     assert csv_path.exists()
     assert weekly_path.exists()
     assert thought_path.exists()
+    assert strategic_path.exists()
 
     content = md_path.read_text(encoding="utf-8-sig")
     assert "# 影月系統每日觀察" in content
+    assert "## 近三日趨勢脈動" in content
+    assert "## 趨勢交界" in content
+    assert "## 二階影響標籤" in content
+    assert "## 今日可執行" in content
+    assert "## 需要持續觀察" in content
     assert "## 世界新聞整理" in content
+
+    strategic_content = strategic_path.read_text(encoding="utf-8-sig")
+    assert "# 影月系統策略週報" in strategic_content
+    assert "## 二、城市與系統傳導" in strategic_content
+    assert "## 六、固定輸出摘要" in strategic_content
 
 
 
@@ -159,6 +171,7 @@ def test_report_endpoints_and_network_events():
         api.latest_daily_observation,
         api.latest_weekly_observation,
         api.latest_thought_links,
+        api.latest_strategic_report,
         api.latest_agent_pipeline,
     ):
         resp = func()
@@ -170,4 +183,6 @@ def test_report_endpoints_and_network_events():
     assert isinstance(api.network_events(), list)
     assert isinstance(api.network_event_summary(), dict)
     assert isinstance(api.network_events_by_type("any"), list)
+
+
 

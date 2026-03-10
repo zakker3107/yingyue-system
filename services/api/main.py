@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 import os
@@ -11,6 +11,7 @@ from services.core.settings import REPORT_DIR
 from services.core.storage import db_connection, initialize_db
 
 TASK_NAME = os.getenv("YINGYUE_TASK_NAME", "YingYue-Daily-Ops")
+
 
 @lru_cache(maxsize=128)
 def _cached_news_query(limit: int, offset: int = 0) -> tuple[tuple, ...]:
@@ -126,6 +127,12 @@ def latest_thought_links() -> dict[str, str]:
     return _latest_report("thought_links_*.md", "thought_links")
 
 
+def latest_strategic_report() -> dict[str, str]:
+    if (REPORT_DIR / "strategic_report_latest.md").exists():
+        return _latest_report("strategic_report_latest.md", "strategic_report")
+    return _latest_report("strategic_report_*.md", "strategic_report")
+
+
 def latest_agent_pipeline() -> dict[str, object]:
     if (REPORT_DIR / "agent_pipeline_latest.json").exists():
         return _latest_json_report("agent_pipeline_latest.json", "agent_pipeline")
@@ -226,6 +233,7 @@ def station_summary() -> dict[str, object]:
             "daily": _latest_report_meta("daily_report_*.md", "daily_observation"),
             "weekly": _latest_report_meta("weekly_observation_*.md", "weekly_observation"),
             "thought_links": _latest_report_meta("thought_links_*.md", "thought_links"),
+            "strategic": _latest_report_meta("strategic_report_*.md", "strategic_report"),
             "agent_pipeline": _latest_report_meta("agent_pipeline_*.json", "agent_pipeline"),
             "status": _latest_report_meta("status_report.md", "status_report"),
         },
@@ -238,9 +246,38 @@ def task_overview() -> dict[str, object]:
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "task_name": TASK_NAME,
         "tasks": [
-            {"id": "daily-ops", "name": "Daily Ops", "kind": "scheduled", "status": "READY", "schedule": "Every day 08:30", "outputs": [reports.get("daily", {}), reports.get("status", {})]},
-            {"id": "health-report", "name": "Health Report", "kind": "manual", "status": "AVAILABLE", "schedule": "On demand", "outputs": [reports.get("status", {})]},
-            {"id": "agent-pipeline", "name": "Agent Pipeline Snapshot", "kind": "artifact", "status": "AVAILABLE", "schedule": "After pipeline run", "outputs": [reports.get("agent_pipeline", {})]},
+            {
+                "id": "daily-ops",
+                "name": "Daily Ops",
+                "kind": "scheduled",
+                "status": "READY",
+                "schedule": "Every day 08:30",
+                "outputs": [reports.get("daily", {}), reports.get("status", {})],
+            },
+            {
+                "id": "strategic-report",
+                "name": "Strategic Report",
+                "kind": "artifact",
+                "status": "AVAILABLE",
+                "schedule": "On demand / after pipeline run",
+                "outputs": [reports.get("strategic", {}), reports.get("weekly", {})],
+            },
+            {
+                "id": "health-report",
+                "name": "Health Report",
+                "kind": "manual",
+                "status": "AVAILABLE",
+                "schedule": "On demand",
+                "outputs": [reports.get("status", {})],
+            },
+            {
+                "id": "agent-pipeline",
+                "name": "Agent Pipeline Snapshot",
+                "kind": "artifact",
+                "status": "AVAILABLE",
+                "schedule": "After pipeline run",
+                "outputs": [reports.get("agent_pipeline", {})],
+            },
         ],
     }
 
@@ -251,14 +288,18 @@ def assistant_context() -> dict[str, object]:
     latest = station.get("latest_news") or {}
     prompts = []
     if latest:
-        prompts.append(f"整理最新新聞《{latest.get('title', '')}》對今日觀察的影響")
+        prompts.append(f"請從〈{latest.get('title', '')}〉延伸二階影響與城市層傳導。")
     for trend in top_trends:
-        prompts.append(f"分析趨勢 {trend.get('metric_name', '')} 的近期變化")
-    prompts.append("檢查每日排程是否有缺失並給出補跑建議")
+        prompts.append(f"請解釋趨勢 {trend.get('metric_name', '')} 的意義與風險。")
+    prompts.append("請把最新策略週報濃縮成三條可執行重點。")
     return {
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "task_name": TASK_NAME,
-        "summary": {"latest_news": latest, "top_trends": top_trends, "report_status": station.get("reports", {})},
+        "summary": {
+            "latest_news": latest,
+            "top_trends": top_trends,
+            "report_status": station.get("reports", {}),
+        },
         "suggested_prompts": prompts,
     }
 
