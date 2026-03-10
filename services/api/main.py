@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import os
@@ -253,6 +253,11 @@ def task_overview() -> dict[str, object]:
                 "status": "READY",
                 "schedule": "Every day 08:30",
                 "outputs": [reports.get("daily", {}), reports.get("status", {})],
+                "actions": [
+                    {"label": "Run MVP", "command": "python scripts\\run_mvp.py"},
+                    {"label": "Generate Daily Report", "command": "python scripts\\generate_daily_report.py"},
+                    {"label": "Open Health", "path": "/health"},
+                ],
             },
             {
                 "id": "strategic-report",
@@ -261,6 +266,10 @@ def task_overview() -> dict[str, object]:
                 "status": "AVAILABLE",
                 "schedule": "On demand / after pipeline run",
                 "outputs": [reports.get("strategic", {}), reports.get("weekly", {})],
+                "actions": [
+                    {"label": "Generate Strategic Report", "command": "python scripts\\generate_strategic_report.py"},
+                    {"label": "Open Latest Strategic", "path": "/strategic-report/latest"},
+                ],
             },
             {
                 "id": "health-report",
@@ -269,6 +278,11 @@ def task_overview() -> dict[str, object]:
                 "status": "AVAILABLE",
                 "schedule": "On demand",
                 "outputs": [reports.get("status", {})],
+                "actions": [
+                    {"label": "Run Health Check", "command": "python scripts\\health_check.py --run-smoke"},
+                    {"label": "Generate Status Report", "command": "python scripts\\status_report.py"},
+                    {"label": "Open Monitor Snapshot", "path": "/monitor/snapshot"},
+                ],
             },
             {
                 "id": "agent-pipeline",
@@ -277,32 +291,58 @@ def task_overview() -> dict[str, object]:
                 "status": "AVAILABLE",
                 "schedule": "After pipeline run",
                 "outputs": [reports.get("agent_pipeline", {})],
+                "actions": [
+                    {"label": "Open Agent Snapshot", "path": "/agents/latest"},
+                    {"label": "Open Task Overview", "path": "/tasks/overview"},
+                ],
             },
         ],
     }
-
 
 def assistant_context() -> dict[str, object]:
     station = station_summary()
     top_trends = station.get("top_trends", [])[:3]
     latest = station.get("latest_news") or {}
+    reports = station.get("reports", {})
+
     prompts = []
     if latest:
         prompts.append(f"請從〈{latest.get('title', '')}〉延伸二階影響與城市層傳導。")
     for trend in top_trends:
         prompts.append(f"請解釋趨勢 {trend.get('metric_name', '')} 的意義與風險。")
     prompts.append("請把最新策略週報濃縮成三條可執行重點。")
+
+    ready_reports = [
+        {"name": name, **report}
+        for name, report in reports.items()
+        if isinstance(report, dict) and "error" not in report
+    ]
+    missing_reports = [
+        {"name": name, **report}
+        for name, report in reports.items()
+        if isinstance(report, dict) and "error" in report
+    ]
+
+    focus = "追蹤最新訊號"
+    if top_trends:
+        focus = f"聚焦 {top_trends[0].get('metric_name', '關鍵趨勢')}"
+    elif latest:
+        focus = "拆解最新新聞後續影響"
+
     return {
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "task_name": TASK_NAME,
+        "focus": focus,
+        "prompt_count": len(prompts),
         "summary": {
             "latest_news": latest,
             "top_trends": top_trends,
-            "report_status": station.get("reports", {}),
+            "report_status": reports,
+            "ready_reports": ready_reports,
+            "missing_reports": missing_reports,
         },
         "suggested_prompts": prompts,
     }
-
 
 def monitor_snapshot() -> dict[str, object]:
     station = station_summary()
@@ -323,3 +363,5 @@ def monitor_snapshot() -> dict[str, object]:
 
 def startup() -> None:
     initialize_db()
+
+

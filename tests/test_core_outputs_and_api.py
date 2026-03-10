@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from pathlib import Path
 import sys
@@ -186,3 +186,32 @@ def test_report_endpoints_and_network_events():
 
 
 
+
+def test_assistant_context_contains_workspace_summary():
+    api.startup()
+    context = api.assistant_context()
+
+    assert isinstance(context, dict)
+    assert isinstance(context.get("focus"), str)
+    assert context.get("prompt_count") == len(context.get("suggested_prompts", []))
+
+    summary = context.get("summary", {})
+    assert isinstance(summary.get("ready_reports", []), list)
+    assert isinstance(summary.get("missing_reports", []), list)
+    assert isinstance(summary.get("report_status", {}), dict)
+
+def test_task_overview_contains_actions():
+    api.startup()
+    overview = api.task_overview()
+
+    assert isinstance(overview, dict)
+    tasks = overview.get("tasks", [])
+    assert isinstance(tasks, list)
+    assert tasks
+
+    for task in tasks:
+        assert isinstance(task.get("actions", []), list)
+        assert task["actions"]
+        for action in task["actions"]:
+            assert "label" in action
+            assert "command" in action or "path" in action
