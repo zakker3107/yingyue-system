@@ -70,10 +70,27 @@ def is_pid_running(pid: int) -> bool:
             check=False,
         )
         output = (result.stdout or "").strip()
-        if not output or output.startswith("INFO:"):
-            return False
-        rows = list(csv.reader(io.StringIO(output)))
-        return bool(rows and len(rows[0]) >= 2 and rows[0][1] == str(pid))
+        if output and not output.startswith("INFO:"):
+            rows = list(csv.reader(io.StringIO(output)))
+            if rows and len(rows[0]) >= 2 and rows[0][1] == str(pid):
+                return True
+
+        # Some Windows sessions cannot inspect tasklist details for detached
+        # background processes. Fall back to Get-Process before declaring it dead.
+        fallback = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                f"$p = Get-Process -Id {pid} -ErrorAction SilentlyContinue; if ($p) {{ 'RUNNING' }}",
+            ],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="ignore",
+            check=False,
+        )
+        return (fallback.stdout or "").strip() == "RUNNING"
     try:
         os.kill(pid, 0)
     except OSError:
@@ -178,3 +195,4 @@ def terminate_pid(pid: int, timeout: float = 8.0) -> bool:
             return True
         time.sleep(0.2)
     return not is_pid_running(pid)
+

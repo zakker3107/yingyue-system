@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import gzip
 import json
@@ -20,7 +20,9 @@ from services.api import main as api
 class YingYueHandler(BaseHTTPRequestHandler):
     def _send_json(self, payload: object, status: int = 200, compress: bool = True) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        if compress and len(body) > 1024 and self.client_address[0] != "127.0.0.1":
+        accept_encoding = self.headers.get("Accept-Encoding", "")
+        supports_gzip = "gzip" in accept_encoding.lower()
+        if compress and supports_gzip and len(body) > 1024 and self.client_address[0] != "127.0.0.1":
             body = gzip.compress(body, compresslevel=6)
             self.send_response(status)
             self.send_header("Content-Type", "application/json; charset=utf-8")
