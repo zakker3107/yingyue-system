@@ -1,5 +1,5 @@
-﻿param(
-    [string]$TaskName = "YingYue-Daily-MVP",
+param(
+    [string]$TaskName = "YingYue-Daily-Ops",
     [string]$Time = "08:30"
 )
 

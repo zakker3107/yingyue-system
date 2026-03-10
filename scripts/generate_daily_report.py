@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import sys
@@ -15,4 +15,7 @@ from services.core.storage import initialize_db
 if __name__ == "__main__":
     initialize_db()
     result = generate_daily_report()
-    print(json.dumps(result, ensure_ascii=False, indent=2))
+    payload = json.dumps(result, ensure_ascii=False, indent=2)
+    sys.stdout.buffer.write(payload.encode(sys.stdout.encoding or "utf-8", errors="replace"))
+    sys.stdout.buffer.write(b"\n")
+

@@ -1,24 +1,26 @@
 ﻿from __future__ import annotations
 
 import json
+import os
 import time
-from pathlib import Path
+from datetime import datetime
 from functools import lru_cache
+from pathlib import Path
 
 from services.core.settings import REPORT_DIR
 from services.core.storage import db_connection, initialize_db
 
+TASK_NAME = os.getenv("YINGYUE_TASK_NAME", "YingYue-Daily-Ops")
 
-# 簡單的查詢快取 (LRU)
+
 @lru_cache(maxsize=128)
 def _cached_news_query(limit: int, offset: int = 0) -> tuple[tuple, ...]:
-    """快取新聞查詢結果 (最多 128 個查詢)"""
     with db_connection() as conn:
         rows = conn.execute(
             """
             SELECT title, link, source, topic, published_at, summary
             FROM news_items
-            ORDER BY datetime(published_at) DESC
+            ORDER BY published_at DESC
             LIMIT ? OFFSET ?
             """,
             (limit, offset),
@@ -31,26 +33,19 @@ def health() -> dict[str, str]:
 
 
 def latest_news(limit: int = 10) -> list[dict[str, str]]:
-    """優化：使用快取減少資料庫查詢，並驗證參數"""
-    # 參數驗證
-    limit = max(1, min(int(limit), 100))  # 限制在 1-100
-    
-    rows = _cached_news_query(limit, 0)
-    return [dict(r) for r in rows]
+    limit = max(1, min(int(limit), 100))
+    return [dict(r) for r in _cached_news_query(limit, 0)]
 
 
 def search_philosophy(q: str) -> list[dict[str, str]]:
-    """搜尋哲學條目，有參數驗證"""
-    # 清理查詢字符
-    q = str(q).strip()[:500]  # 最多 500 字
+    q = str(q).strip()[:500]
     if not q:
-        # 空查詢返回最新條目
         with db_connection() as conn:
             rows = conn.execute(
                 "SELECT title, author, school, era, summary, keywords FROM philosophy_entries ORDER BY id DESC LIMIT 20"
             ).fetchall()
         return [dict(r) for r in rows]
-    
+
     pattern = f"%{q.lower()}%"
     with db_connection() as conn:
         rows = conn.execute(
@@ -80,33 +75,43 @@ def trends_summary() -> list[dict[str, str]]:
 
 def _latest_report(pattern: str, report_type: str) -> dict[str, str]:
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
-    files = sorted(REPORT_DIR.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
+    files = list(REPORT_DIR.glob(pattern))
     if not files:
         return {"error": f"{report_type} report not found"}
-
-    latest: Path = files[0]
-    content = latest.read_text(encoding="utf-8-sig")
+    latest: Path = max(files, key=lambda p: p.stat().st_mtime)
     return {
         "type": report_type,
         "path": str(latest),
         "filename": latest.name,
-        "content": content,
+        "content": latest.read_text(encoding="utf-8-sig"),
     }
 
 
 def _latest_json_report(pattern: str, report_type: str) -> dict[str, object]:
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
-    files = sorted(REPORT_DIR.glob(pattern), key=lambda p: p.stat().st_mtime, reverse=True)
+    files = list(REPORT_DIR.glob(pattern))
     if not files:
         return {"error": f"{report_type} report not found"}
-
-    latest: Path = files[0]
-    payload = json.loads(latest.read_text(encoding="utf-8"))
+    latest: Path = max(files, key=lambda p: p.stat().st_mtime)
     return {
         "type": report_type,
         "path": str(latest),
         "filename": latest.name,
-        "content": payload,
+        "content": json.loads(latest.read_text(encoding="utf-8")),
+    }
+
+
+def _latest_report_meta(pattern: str, report_type: str) -> dict[str, str]:
+    REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    files = list(REPORT_DIR.glob(pattern))
+    if not files:
+        return {"error": f"{report_type} report not found"}
+    latest: Path = max(files, key=lambda p: p.stat().st_mtime)
+    return {
+        "type": report_type,
+        "path": str(latest),
+        "filename": latest.name,
+        "updated_at": datetime.fromtimestamp(latest.stat().st_mtime).astimezone().isoformat(timespec="seconds"),
     }
 
 
@@ -122,6 +127,12 @@ def latest_thought_links() -> dict[str, str]:
     return _latest_report("thought_links_*.md", "thought_links")
 
 
+def latest_strategic_report() -> dict[str, str]:
+    if (REPORT_DIR / "strategic_report_latest.md").exists():
+        return _latest_report("strategic_report_latest.md", "strategic_report")
+    return _latest_report("strategic_report_*.md", "strategic_report")
+
+
 def latest_agent_pipeline() -> dict[str, object]:
     if (REPORT_DIR / "agent_pipeline_latest.json").exists():
         return _latest_json_report("agent_pipeline_latest.json", "agent_pipeline")
@@ -129,42 +140,26 @@ def latest_agent_pipeline() -> dict[str, object]:
 
 
 def network_events(event_type: str = "", status: str = "active", limit: int = 20) -> list[dict[str, object]]:
-    """查詢網路事件 (Network Events)，含參數驗證
-    
-    Args:
-        event_type: 事件類型篩選 (可選)
-        status: 事件狀態篩選，預設為 'active'
-        limit: 返回數量限制，最多 100
-    """
-    # 參數驗證
     event_type = str(event_type).strip()[:100]
     status = str(status).strip()[:50]
     limit = max(1, min(int(limit), 100))
-    
     with db_connection() as conn:
-        query = "SELECT * FROM network_events WHERE 1=1"
+        query = "SELECT id, event_name, event_type, source, source_url, description, event_date, severity, status, related_topics, tags, source_news_id, created_at, updated_at FROM network_events WHERE 1=1"
         params = []
-        
         if status:
             query += " AND status = ?"
             params.append(status)
-        
         if event_type:
             query += " AND event_type = ?"
             params.append(event_type)
-        
         query += " ORDER BY event_date DESC LIMIT ?"
         params.append(limit)
-        
         rows = conn.execute(query, params).fetchall()
-    
     return [dict(r) for r in rows]
 
 
 def network_event_summary() -> dict[str, object]:
-    """獲取網路事件摘要統計"""
     with db_connection() as conn:
-        # 事件類型統計
         event_types = conn.execute(
             """
             SELECT event_type, COUNT(*) as count, MAX(event_date) as latest_date
@@ -174,8 +169,6 @@ def network_event_summary() -> dict[str, object]:
             ORDER BY count DESC
             """
         ).fetchall()
-        
-        # 嚴重程度統計
         severity_stats = conn.execute(
             """
             SELECT severity, COUNT(*) as count
@@ -184,8 +177,6 @@ def network_event_summary() -> dict[str, object]:
             GROUP BY severity
             """
         ).fetchall()
-        
-        # 最近活動事件
         recent_events = conn.execute(
             """
             SELECT id, event_name, event_type, severity, event_date
@@ -195,7 +186,6 @@ def network_event_summary() -> dict[str, object]:
             LIMIT 10
             """
         ).fetchall()
-    
     return {
         "event_type_summary": [dict(r) for r in event_types],
         "severity_summary": [dict(r) for r in severity_stats],
@@ -204,8 +194,131 @@ def network_event_summary() -> dict[str, object]:
 
 
 def network_events_by_type(event_type: str, limit: int = 20) -> list[dict[str, object]]:
-    """按事件類型查詢網路事件"""
     return network_events(event_type=event_type, limit=limit)
+
+
+def station_summary() -> dict[str, object]:
+    with db_connection() as conn:
+        table_counts = conn.execute(
+            """
+            SELECT
+              (SELECT COUNT(*) FROM news_items) AS news_count,
+              (SELECT COUNT(*) FROM trend_snapshots) AS trend_count,
+              (SELECT COUNT(*) FROM philosophy_entries) AS philosophy_count,
+              (SELECT COUNT(*) FROM network_events WHERE status = 'active') AS active_event_count
+            """
+        ).fetchone()
+        latest_news_row = conn.execute(
+            """
+            SELECT title, source, topic, published_at
+            FROM news_items
+            ORDER BY published_at DESC
+            LIMIT 1
+            """
+        ).fetchone()
+        top_trends = conn.execute(
+            """
+            SELECT metric_name, metric_value, bucket, captured_at
+            FROM trend_snapshots
+            ORDER BY captured_at DESC, metric_value DESC
+            LIMIT 5
+            """
+        ).fetchall()
+    return {
+        "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "counts": dict(table_counts) if table_counts else {},
+        "latest_news": dict(latest_news_row) if latest_news_row else None,
+        "top_trends": [dict(r) for r in top_trends],
+        "reports": {
+            "daily": _latest_report_meta("daily_report_*.md", "daily_observation"),
+            "weekly": _latest_report_meta("weekly_observation_*.md", "weekly_observation"),
+            "thought_links": _latest_report_meta("thought_links_*.md", "thought_links"),
+            "strategic": _latest_report_meta("strategic_report_*.md", "strategic_report"),
+            "agent_pipeline": _latest_report_meta("agent_pipeline_*.json", "agent_pipeline"),
+            "status": _latest_report_meta("status_report.md", "status_report"),
+        },
+    }
+
+
+def task_overview() -> dict[str, object]:
+    reports = station_summary().get("reports", {})
+    return {
+        "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "task_name": TASK_NAME,
+        "tasks": [
+            {
+                "id": "daily-ops",
+                "name": "Daily Ops",
+                "kind": "scheduled",
+                "status": "READY",
+                "schedule": "Every day 08:30",
+                "outputs": [reports.get("daily", {}), reports.get("status", {})],
+            },
+            {
+                "id": "strategic-report",
+                "name": "Strategic Report",
+                "kind": "artifact",
+                "status": "AVAILABLE",
+                "schedule": "On demand / after pipeline run",
+                "outputs": [reports.get("strategic", {}), reports.get("weekly", {})],
+            },
+            {
+                "id": "health-report",
+                "name": "Health Report",
+                "kind": "manual",
+                "status": "AVAILABLE",
+                "schedule": "On demand",
+                "outputs": [reports.get("status", {})],
+            },
+            {
+                "id": "agent-pipeline",
+                "name": "Agent Pipeline Snapshot",
+                "kind": "artifact",
+                "status": "AVAILABLE",
+                "schedule": "After pipeline run",
+                "outputs": [reports.get("agent_pipeline", {})],
+            },
+        ],
+    }
+
+
+def assistant_context() -> dict[str, object]:
+    station = station_summary()
+    top_trends = station.get("top_trends", [])[:3]
+    latest = station.get("latest_news") or {}
+    prompts = []
+    if latest:
+        prompts.append(f"請從〈{latest.get('title', '')}〉延伸二階影響與城市層傳導。")
+    for trend in top_trends:
+        prompts.append(f"請解釋趨勢 {trend.get('metric_name', '')} 的意義與風險。")
+    prompts.append("請把最新策略週報濃縮成三條可執行重點。")
+    return {
+        "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "task_name": TASK_NAME,
+        "summary": {
+            "latest_news": latest,
+            "top_trends": top_trends,
+            "report_status": station.get("reports", {}),
+        },
+        "suggested_prompts": prompts,
+    }
+
+
+def monitor_snapshot() -> dict[str, object]:
+    station = station_summary()
+    network = network_event_summary()
+    counts = station.get("counts", {})
+    return {
+        "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "health": health(),
+        "counts": counts,
+        "network": {
+            "active_events": counts.get("active_event_count", 0),
+            "severity_summary": network.get("severity_summary", []),
+            "recent_events": network.get("recent_events", [])[:5],
+        },
+        "reports": station.get("reports", {}),
+    }
 
 
 def startup() -> None:

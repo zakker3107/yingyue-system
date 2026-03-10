@@ -32,3 +32,5 @@ vendor/
 tools/gcloud-config/
 tools/google-cloud-sdk/
 tools/google-cloud-cli.zip
+
+tests/_runtime_tmp/

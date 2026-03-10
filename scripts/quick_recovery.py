@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import argparse
 import os
@@ -10,6 +10,7 @@ from pathlib import Path
 from urllib import error, request
 
 from activity_rules_runtime import active_rule_ids, has_rule, load_rules
+from scripts.status_report import collect_status, write_outputs
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 REPORT_DIR = PROJECT_ROOT / "data" / "processed" / "reports" / "recovery"
@@ -149,6 +150,19 @@ def main() -> int:
         actions.append(_run_step("smoke_test", [str(python_exe), "tests\\test_pipeline_smoke.py"]))
 
     _append_rule_actions(actions, rules_payload, python_exe, args.base_url)
+
+    status_report_path = PROJECT_ROOT / "data" / "processed" / "reports" / "status_report.md"
+    status_json_path = PROJECT_ROOT / "data" / "processed" / "reports" / "status_report.json"
+    status_snapshot = collect_status(args.base_url)
+    write_outputs(status_snapshot, status_report_path, status_json_path)
+    actions.append(
+        {
+            "name": "status_report",
+            "status": "PASS" if status_snapshot["overall"] != "FAIL" else "FAIL",
+            "code": 0 if status_snapshot["overall"] != "FAIL" else 1,
+            "stdout": str(status_report_path),
+        }
+    )
 
     overall = "PASS" if all(_is_step_ok(step, healthy_after) for step in actions) else "FAIL"
 

@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 from core.orchestrator.pipeline import run_agent_pipeline
 from pipelines.reporting.daily_report import generate_daily_report
+from pipelines.reporting.strategic_report import generate_strategic_weekly_report
 from scripts.activity_rules_runtime import active_rule_ids, has_rule, load_rules
 from services.core.ingestion.news_ingestor_optimized import run_news_ingestion
 from services.core.kb.philosophy_kb import run_philosophy_kb_refresh
@@ -14,13 +15,12 @@ from services.core.trends.analyzer import build_trend_snapshot
 
 
 def _extract_network_events() -> int:
-    """從新聞中提取網路事件"""
     try:
         from scripts.extract_network_events import extract_events
 
         return extract_events()
     except Exception as e:
-        print(f"[Warning] 網路事件提取失敗: {e}")
+        print(f"[Warning] network event extraction failed: {e}")
         return 0
 
 
@@ -30,7 +30,7 @@ def _latest_news_for_agents(limit: int = 20) -> list[dict[str, str]]:
             """
             SELECT title, source, topic, published_at, summary, link
             FROM news_items
-            ORDER BY datetime(published_at) DESC
+            ORDER BY published_at DESC
             LIMIT ?
             """,
             (limit,),
@@ -110,11 +110,12 @@ def _write_agent_output(agent_result: dict[str, object], date_label: str) -> dic
 
 def run_pipeline() -> dict[str, object]:
     initialize_db()
-    news_count = run_news_ingestion()  # 使用優化版本的爬蟲
+    news_count = run_news_ingestion()
     philosophy_count = run_philosophy_kb_refresh()
     trend_summary = build_trend_snapshot()
     network_events_count = _extract_network_events()
     report_paths = generate_daily_report()
+    strategic_report_paths = generate_strategic_weekly_report(str(report_paths.get("date", "latest")))
 
     rules_payload = load_rules()
     enabled_rule_ids = active_rule_ids(rules_payload)
@@ -140,6 +141,7 @@ def run_pipeline() -> dict[str, object]:
         "trend_summary": trend_summary,
         "network_events_extracted": network_events_count,
         "daily_report": report_paths,
+        "strategic_report": strategic_report_paths,
         "agent_pipeline": agent_result,
         "agent_output": agent_paths,
         "active_rules": enabled_rule_ids,

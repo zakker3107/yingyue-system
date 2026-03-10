@@ -1,5 +1,4 @@
-﻿from __future__ import annotations
-
+from __future__ import annotations
 import argparse
 import importlib.util
 import json
@@ -10,29 +9,21 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
-
 from activity_rules_runtime import active_rule_ids, load_rules
-
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 VENV_PYTHON = PROJECT_ROOT / ".venv" / "Scripts" / "python.exe"
 REPORT_DIR = PROJECT_ROOT / "data" / "processed" / "reports"
-TASK_NAME = "YingYue-Daily-MVP"
-
-
+TASK_NAME = os.getenv("YINGYUE_TASK_NAME", "YingYue-Daily-Ops")
+TASK_SUMMARY_KEYS = {"status", "last run time", "next run time", "last result"}
 def to_console_text(value: object) -> str:
     text = str(value)
     encoding = sys.stdout.encoding or "utf-8"
     return text.encode(encoding, errors="replace").decode(encoding, errors="replace")
-
-
 def print_line(title: str, value: str) -> None:
     print(to_console_text(f"- {title}: {value}"))
-
-
 def get_windows_version() -> str:
     try:
         import winreg
-
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows NT\CurrentVersion") as key:
             product_name = winreg.QueryValueEx(key, "ProductName")[0]
             display_version = winreg.QueryValueEx(key, "DisplayVersion")[0]
@@ -41,17 +32,12 @@ def get_windows_version() -> str:
         return f"{product_name} {display_version} (Build {current_build}.{ubr})"
     except Exception:
         return platform.platform()
-
-
 def get_pip_version() -> str:
     try:
         from importlib.metadata import version
-
         return version("pip")
     except Exception:
         return "unknown"
-
-
 def run_subprocess(cmd: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         cmd,
@@ -61,8 +47,19 @@ def run_subprocess(cmd: list[str]) -> subprocess.CompletedProcess[str]:
         encoding="utf-8",
         errors="replace",
     )
-
-
+def _summarize_schtasks_output(stdout: str) -> str:
+    key_value_lines = [line.strip() for line in stdout.splitlines() if ":" in line]
+    if not key_value_lines:
+        return "AVAILABLE (via schtasks)"
+    selected: list[str] = []
+    for line in key_value_lines:
+        key, value = line.split(":", 1)
+        normalized_key = key.strip().lower()
+        if normalized_key in TASK_SUMMARY_KEYS and value.strip():
+            selected.append(f"{key.strip()}={value.strip()}")
+    if not selected:
+        selected = [line for line in key_value_lines[:4] if line.strip()]
+    return " | ".join(selected) if selected else "AVAILABLE (via schtasks)"
 def get_task_status() -> str:
     ps_script = (
         "$ErrorActionPreference='Stop';"
@@ -77,82 +74,42 @@ def get_task_status() -> str:
         "}"
     )
     result = run_subprocess(["powershell", "-NoProfile", "-Command", ps_script])
-    out = (result.stdout or "").strip()
-    err = (result.stderr or "").strip()
-    status = out or err or "Unavailable"
-
-    denied_markers = ["拒絕存取", "Access is denied", "UnauthorizedAccess", "Unavailable"]
-    if any(marker in status for marker in denied_markers):
+    status = ((result.stdout or "") + (result.stderr or "")).strip() or "Unavailable"
+    if result.returncode != 0 or status.startswith("Unavailable:") or "Access is denied" in status:
         fallback = get_task_status_from_schtasks()
-        if fallback:
-            return fallback
+        return fallback or status
     return status
-
-
 def get_task_status_from_schtasks() -> str:
-    query_error_markers = ["cannot find the path specified", "系統找不到指定的路徑"]
-
     for task_name in (TASK_NAME, f"\\{TASK_NAME}"):
         result = run_subprocess(["schtasks", "/Query", "/TN", task_name, "/FO", "LIST", "/V"])
         stdout = (result.stdout or "").strip()
         stderr = (result.stderr or "").strip()
         combined = f"{stdout}\n{stderr}".lower()
-
-        if any(marker in combined for marker in query_error_markers):
-            return "UNAVAILABLE (cannot query scheduled tasks from current session)"
-
+        if "cannot find the path specified" in combined or "error:" in combined and not stdout:
+            return "UNAVAILABLE (cannot query scheduled task from current session)"
         if result.returncode != 0:
             if stderr:
                 return f"UNAVAILABLE (schtasks: {stderr})"
             continue
-
-        if not stdout:
-            continue
-
-        wanted_keys = {
-            "Status",
-            "Last Run Time",
-            "Next Run Time",
-            "Last Result",
-            "狀態",
-            "上次執行時間",
-            "下次執行時間",
-            "上次結果",
-        }
-        parts: list[str] = []
-        for line in stdout.splitlines():
-            if ":" not in line:
-                continue
-            key, value = line.split(":", 1)
-            key = key.strip()
-            value = value.strip()
-            if key in wanted_keys and value:
-                parts.append(f"{key}={value}")
-
-        return " | ".join(parts) if parts else "AVAILABLE (via schtasks)"
-
+        if stdout:
+            return _summarize_schtasks_output(stdout)
     return "NOT_INSTALLED_OR_INVISIBLE"
-
-
 def get_firebase_status() -> str:
     sdk_installed = importlib.util.find_spec("firebase_admin") is not None
     cred_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
     project_id = os.getenv("FIREBASE_PROJECT_ID", "").strip()
     cloudsdk_config = os.getenv("CLOUDSDK_CONFIG", "").strip()
-
     adc_candidates = [
         Path(cloudsdk_config) / "application_default_credentials.json" if cloudsdk_config else None,
         PROJECT_ROOT / "tools" / "gcloud-config" / "application_default_credentials.json",
         PROJECT_ROOT / ".gcloud" / "application_default_credentials.json",
         Path(os.getenv("APPDATA", "")) / "gcloud" / "application_default_credentials.json" if os.getenv("APPDATA") else None,
     ]
-    has_adc = any(p and p.exists() for p in adc_candidates)
-
+    has_adc = any(path and path.exists() for path in adc_candidates)
     if not sdk_installed and not cred_path and not project_id and not has_adc:
         return "NOT_CONFIGURED"
     if not sdk_installed:
         return "SDK_MISSING (install firebase-admin)"
-
     cred_exists = Path(cred_path).exists() if cred_path else False
     if cred_exists:
         return "READY_BASIC"
@@ -160,10 +117,7 @@ def get_firebase_status() -> str:
         return "READY_ADC"
     if cred_path and not cred_exists:
         return f"CREDENTIALS_NOT_FOUND ({cred_path})"
-
     return "CREDENTIALS_MISSING (set GOOGLE_APPLICATION_CREDENTIALS or run gcloud auth application-default login)"
-
-
 def get_report_status(today: str) -> dict[str, str]:
     expected = {
         "daily_report": REPORT_DIR / f"daily_report_{today}.md",
@@ -175,15 +129,11 @@ def get_report_status(today: str) -> dict[str, str]:
     for key, path in expected.items():
         status[key] = "OK" if path.exists() else "MISSING"
     return status
-
-
 def get_recent_outputs(limit: int = 5) -> list[str]:
     if not REPORT_DIR.exists():
         return []
-    files = sorted(REPORT_DIR.glob("*"), key=lambda p: p.stat().st_mtime, reverse=True)
-    return [f"{p.name} ({datetime.fromtimestamp(p.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S')})" for p in files[:limit]]
-
-
+    files = sorted(REPORT_DIR.glob("*"), key=lambda path: path.stat().st_mtime, reverse=True)
+    return [f"{path.name} ({datetime.fromtimestamp(path.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S')})" for path in files[:limit]]
 def get_activity_rules_status() -> dict[str, object]:
     payload = load_rules()
     rule_ids = active_rule_ids(payload)
@@ -198,33 +148,24 @@ def get_activity_rules_status() -> dict[str, object]:
         "high_count": high_count,
         "rule_ids": rule_ids,
     }
-
-
 def run_smoke_test() -> str:
     if not VENV_PYTHON.exists():
         return "SKIPPED (.venv missing)"
-
     result = subprocess.run(
         [str(VENV_PYTHON), "tests\\test_pipeline_smoke.py"],
         cwd=PROJECT_ROOT,
         text=True,
     )
     return "PASS" if result.returncode == 0 else f"FAIL (exit={result.returncode})"
-
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Health check for yingyue-system and host")
     parser.add_argument("--run-smoke", action="store_true", help="Run smoke test")
     parser.add_argument("--json", action="store_true", help="Output JSON")
     return parser.parse_args()
-
-
 def main() -> int:
     args = parse_args()
-
     disk = shutil.disk_usage(PROJECT_ROOT)
     now = datetime.now().strftime("%Y-%m-%d")
-
     report_status = get_report_status(now)
     summary = {
         "timestamp": datetime.now().isoformat(timespec="seconds"),
@@ -242,14 +183,13 @@ def main() -> int:
         "recent_outputs": get_recent_outputs(),
         "activity_rules": get_activity_rules_status(),
     }
-
     if args.run_smoke:
         summary["smoke_test"] = run_smoke_test()
-
     if args.json:
-        print(json.dumps(summary, ensure_ascii=False, indent=2))
+        payload = json.dumps(summary, ensure_ascii=False, indent=2)
+        sys.stdout.buffer.write(payload.encode(sys.stdout.encoding or "utf-8", errors="replace"))
+        sys.stdout.buffer.write(b"\n")
         return 0
-
     print(to_console_text("[YingYue Health Check]"))
     print_line("Time", summary["timestamp"])
     print_line("Windows", summary["windows"])
@@ -262,23 +202,18 @@ def main() -> int:
     print(to_console_text("- Reports Today:"))
     for key, value in summary["reports_today"].items():
         print(to_console_text(f"  - {key}: {value}"))
-
     rules = summary["activity_rules"]
     print(to_console_text("- Activity Rules:"))
     print(to_console_text(f"  - path: {rules['path']}"))
     print(to_console_text(f"  - exists: {rules['exists']}"))
     print(to_console_text(f"  - rule_count: {rules['rule_count']} (high={rules['high_count']})"))
     print(to_console_text(f"  - rule_ids: {', '.join(rules['rule_ids']) if rules['rule_ids'] else 'none'}"))
-
     if args.run_smoke:
         print_line("Smoke Test", summary["smoke_test"])
-
     print(to_console_text("- Recent Outputs:"))
     for line in summary["recent_outputs"]:
         print(to_console_text(f"  - {line}"))
-
     return 0
-
-
 if __name__ == "__main__":
     raise SystemExit(main())
+
