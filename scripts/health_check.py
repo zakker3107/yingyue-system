@@ -2,6 +2,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import locale
 import os
 import platform
 import shutil
@@ -15,6 +16,8 @@ VENV_PYTHON = PROJECT_ROOT / ".venv" / "Scripts" / "python.exe"
 REPORT_DIR = PROJECT_ROOT / "data" / "processed" / "reports"
 TASK_NAME = os.getenv("YINGYUE_TASK_NAME", "YingYue-Daily-Ops")
 TASK_SUMMARY_KEYS = {"status", "last run time", "next run time", "last result"}
+SUBPROCESS_ENCODING = locale.getpreferredencoding(False) or "utf-8"
+TASK_HELP_COMMAND = "schtasks /Query /TN YingYue-Daily-Ops /V /FO LIST"
 def to_console_text(value: object) -> str:
     text = str(value)
     encoding = sys.stdout.encoding or "utf-8"
@@ -44,7 +47,7 @@ def run_subprocess(cmd: list[str]) -> subprocess.CompletedProcess[str]:
         cwd=PROJECT_ROOT,
         text=True,
         capture_output=True,
-        encoding="utf-8",
+        encoding=SUBPROCESS_ENCODING,
         errors="replace",
     )
 def _summarize_schtasks_output(stdout: str) -> str:
@@ -86,14 +89,14 @@ def get_task_status_from_schtasks() -> str:
         stderr = (result.stderr or "").strip()
         combined = f"{stdout}\n{stderr}".lower()
         if "cannot find the path specified" in combined or "error:" in combined and not stdout:
-            return "UNAVAILABLE (cannot query scheduled task from current session)"
+            return f"UNAVAILABLE (cannot query scheduled task from current session; run: {TASK_HELP_COMMAND})"
         if result.returncode != 0:
             if stderr:
-                return f"UNAVAILABLE (schtasks: {stderr})"
+                return f"UNAVAILABLE (schtasks: {stderr}; run: {TASK_HELP_COMMAND})"
             continue
         if stdout:
             return _summarize_schtasks_output(stdout)
-    return "NOT_INSTALLED_OR_INVISIBLE"
+    return f"NOT_INSTALLED_OR_INVISIBLE (check with: {TASK_HELP_COMMAND})"
 def get_firebase_status() -> str:
     sdk_installed = importlib.util.find_spec("firebase_admin") is not None
     cred_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
@@ -216,4 +219,7 @@ def main() -> int:
     return 0
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
+
 

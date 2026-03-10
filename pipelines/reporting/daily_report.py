@@ -1,8 +1,8 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import csv
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime
 
 from modules.analysis.sentiment import sentiment_snapshot
 from services.core.settings import REPORT_DIR
@@ -484,7 +484,7 @@ def _write_weekly_observation_report(date_label: str) -> str:
 
 
 def generate_daily_report(report_date: str | None = None) -> dict[str, str]:
-    now = datetime.now(timezone.utc)
+    now = datetime.now().astimezone()
     date_label = report_date or now.date().isoformat()
 
     news = _fetch_news(limit=10)
@@ -511,7 +511,7 @@ def generate_daily_report(report_date: str | None = None) -> dict[str, str]:
     lines: list[str] = []
     lines.append(f"# 影月系統每日觀察 ({date_label})")
     lines.append("")
-    lines.append(f"- 生成時間 (UTC): {now.isoformat()}")
+    lines.append(f"- 生成時間 (Local): {now.isoformat()}")
     lines.append(f"- 新聞筆數: {len(news)}")
     lines.append(f"- 趨勢指標數: {len(trends)}")
     lines.append("")
@@ -605,3 +605,4 @@ def generate_daily_report(report_date: str | None = None) -> dict[str, str]:
         "weekly_observation": weekly_path,
         "thought_links": thought_links_path,
     }
+
