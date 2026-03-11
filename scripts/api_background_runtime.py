@@ -121,10 +121,10 @@ def get_process_command_line(pid: int) -> str:
     return (result.stdout or "").strip()
 
 
-def looks_like_project_api_process(pid: int) -> bool:
+def looks_like_project_api_process(pid: int) -> bool | None:
     cmdline = get_process_command_line(pid).lower()
     if not cmdline:
-        return False
+        return None
     project_marker = str(PROJECT_ROOT).lower()
     return project_marker in cmdline and "start_api" in cmdline
 
@@ -145,7 +145,7 @@ def get_runtime_status() -> dict[str, object]:
     is_project_process = looks_like_project_api_process(pid) if pid_running else False
     port_open = is_port_open(host=host, port=port)
 
-    if not pid_running or not is_project_process:
+    if not pid_running or is_project_process is False:
         return {
             "managed": True,
             "running": port_open,
@@ -157,15 +157,40 @@ def get_runtime_status() -> dict[str, object]:
             "message": "Managed background metadata is stale.",
         }
 
+    if is_project_process is None:
+        if port_open:
+            return {
+                "managed": True,
+                "running": True,
+                "stale": False,
+                "ownership_unverified": True,
+                "pid": pid,
+                "host": host,
+                "port": port,
+                "runtime": runtime,
+                "message": "Managed API PID is running, but process ownership could not be verified in this session.",
+            }
+        return {
+            "managed": True,
+            "running": False,
+            "stale": True,
+            "ownership_unverified": True,
+            "pid": pid,
+            "host": host,
+            "port": port,
+            "runtime": runtime,
+            "message": "Managed API PID is running, but ownership could not be verified and the expected port is closed.",
+        }
+
     return {
         "managed": True,
-        "running": True,
+        "running": port_open,
         "stale": False,
         "pid": pid,
         "host": host,
         "port": port,
         "runtime": runtime,
-        "message": "Managed background API process is running.",
+        "message": "Managed background API process is running." if port_open else "Managed background API process is running, but the expected port is closed.",
     }
 
 

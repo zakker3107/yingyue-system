@@ -38,6 +38,8 @@ def main() -> int:
     if status.get("runtime"):
         runtime = status["runtime"]
         print(f"- Mode:    {runtime.get('mode', 'unknown')}")
+        print(f"- Bind:    {runtime.get('bind_host', runtime.get('host', 'unknown'))}:{runtime.get('port', 'unknown')}")
+        print(f"- Probe:   http://{runtime.get('host', '127.0.0.1')}:{runtime.get('port', 'unknown')}")
         print(f"- Started: {runtime.get('started_at', 'unknown')}")
         print(f"- Stdout:  {runtime.get('stdout_log', '')}")
         print(f"- Stderr:  {runtime.get('stderr_log', '')}")

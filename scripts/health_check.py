@@ -18,6 +18,7 @@ TASK_NAME = os.getenv("YINGYUE_TASK_NAME", "YingYue-Daily-Ops")
 TASK_SUMMARY_KEYS = {"status", "last run time", "next run time", "last result"}
 SUBPROCESS_ENCODING = locale.getpreferredencoding(False) or "utf-8"
 TASK_HELP_COMMAND = "schtasks /Query /TN YingYue-Daily-Ops /V /FO LIST"
+SESSION_LIMITED_TASK_STATUS = f"UNVERIFIED_FROM_CURRENT_SESSION (Task Scheduler access is limited in this session; verify with: {TASK_HELP_COMMAND})"
 def to_console_text(value: object) -> str:
     text = str(value)
     encoding = sys.stdout.encoding or "utf-8"
@@ -88,8 +89,12 @@ def get_task_status_from_schtasks() -> str:
         stdout = (result.stdout or "").strip()
         stderr = (result.stderr or "").strip()
         combined = f"{stdout}\n{stderr}".lower()
-        if "cannot find the path specified" in combined or "error:" in combined and not stdout:
-            return f"UNAVAILABLE (cannot query scheduled task from current session; run: {TASK_HELP_COMMAND})"
+        if "cannot find the path specified" in combined:
+            return SESSION_LIMITED_TASK_STATUS
+        if "access is denied" in combined:
+            return SESSION_LIMITED_TASK_STATUS
+        if "error:" in combined and not stdout:
+            return f"UNAVAILABLE (schtasks query failed in current session; run: {TASK_HELP_COMMAND})"
         if result.returncode != 0:
             if stderr:
                 return f"UNAVAILABLE (schtasks: {stderr}; run: {TASK_HELP_COMMAND})"

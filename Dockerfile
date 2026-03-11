@@ -34,4 +34,4 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import socket; s=socket.socket(); s.connect(('localhost', int('${PORT:-8000}')))" || exit 1
 
 # 啟動命令
-CMD ["sh", "-c", "python -m uvicorn services.api.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh", "-c", "export YINGYUE_API_HOST=0.0.0.0; export YINGYUE_API_PORT=${PORT:-8000}; python scripts/start_api.py"]
