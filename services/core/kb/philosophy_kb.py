@@ -43,3 +43,11 @@ def run_philosophy_kb_refresh() -> int:
     entries = load_seed_entries()
     return store_philosophy_entries(entries)
 
+
+def ensure_philosophy_entries() -> int:
+    with db_connection() as conn:
+        count = conn.execute("SELECT COUNT(*) FROM philosophy_entries").fetchone()[0]
+    if count > 0:
+        return count
+    return run_philosophy_kb_refresh()
+

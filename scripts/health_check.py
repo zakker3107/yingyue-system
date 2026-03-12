@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import argparse
 import importlib.util
 import json
@@ -10,24 +11,36 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+
 from activity_rules_runtime import active_rule_ids, load_rules
+from task_scheduler_runtime import get_task_snapshot
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 VENV_PYTHON = PROJECT_ROOT / ".venv" / "Scripts" / "python.exe"
 REPORT_DIR = PROJECT_ROOT / "data" / "processed" / "reports"
 TASK_NAME = os.getenv("YINGYUE_TASK_NAME", "YingYue-Daily-Ops")
-TASK_SUMMARY_KEYS = {"status", "last run time", "next run time", "last result"}
 SUBPROCESS_ENCODING = locale.getpreferredencoding(False) or "utf-8"
-TASK_HELP_COMMAND = "schtasks /Query /TN YingYue-Daily-Ops /V /FO LIST"
-SESSION_LIMITED_TASK_STATUS = f"UNVERIFIED_FROM_CURRENT_SESSION (Task Scheduler access is limited in this session; verify with: {TASK_HELP_COMMAND})"
+
+
+def configure_stdout() -> None:
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+
 def to_console_text(value: object) -> str:
     text = str(value)
     encoding = sys.stdout.encoding or "utf-8"
     return text.encode(encoding, errors="replace").decode(encoding, errors="replace")
+
+
 def print_line(title: str, value: str) -> None:
     print(to_console_text(f"- {title}: {value}"))
+
+
 def get_windows_version() -> str:
     try:
         import winreg
+
         with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows NT\CurrentVersion") as key:
             product_name = winreg.QueryValueEx(key, "ProductName")[0]
             display_version = winreg.QueryValueEx(key, "DisplayVersion")[0]
@@ -36,12 +49,17 @@ def get_windows_version() -> str:
         return f"{product_name} {display_version} (Build {current_build}.{ubr})"
     except Exception:
         return platform.platform()
+
+
 def get_pip_version() -> str:
     try:
         from importlib.metadata import version
+
         return version("pip")
     except Exception:
         return "unknown"
+
+
 def run_subprocess(cmd: list[str]) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         cmd,
@@ -51,57 +69,8 @@ def run_subprocess(cmd: list[str]) -> subprocess.CompletedProcess[str]:
         encoding=SUBPROCESS_ENCODING,
         errors="replace",
     )
-def _summarize_schtasks_output(stdout: str) -> str:
-    key_value_lines = [line.strip() for line in stdout.splitlines() if ":" in line]
-    if not key_value_lines:
-        return "AVAILABLE (via schtasks)"
-    selected: list[str] = []
-    for line in key_value_lines:
-        key, value = line.split(":", 1)
-        normalized_key = key.strip().lower()
-        if normalized_key in TASK_SUMMARY_KEYS and value.strip():
-            selected.append(f"{key.strip()}={value.strip()}")
-    if not selected:
-        selected = [line for line in key_value_lines[:4] if line.strip()]
-    return " | ".join(selected) if selected else "AVAILABLE (via schtasks)"
-def get_task_status() -> str:
-    ps_script = (
-        "$ErrorActionPreference='Stop';"
-        f"$name='{TASK_NAME}';"
-        "try {"
-        "$task=Get-ScheduledTask -TaskName $name -TaskPath '\\';"
-        "$info=Get-ScheduledTaskInfo -TaskName $name -TaskPath '\\';"
-        "$next=if($info.NextRunTime){$info.NextRunTime}else{'N/A'};"
-        "Write-Output ($task.State + ' | LastResult=' + $info.LastTaskResult + ' | Next=' + $next)"
-        "} catch {"
-        "Write-Output ('Unavailable: ' + $_.Exception.Message)"
-        "}"
-    )
-    result = run_subprocess(["powershell", "-NoProfile", "-Command", ps_script])
-    status = ((result.stdout or "") + (result.stderr or "")).strip() or "Unavailable"
-    if result.returncode != 0 or status.startswith("Unavailable:") or "Access is denied" in status:
-        fallback = get_task_status_from_schtasks()
-        return fallback or status
-    return status
-def get_task_status_from_schtasks() -> str:
-    for task_name in (TASK_NAME, f"\\{TASK_NAME}"):
-        result = run_subprocess(["schtasks", "/Query", "/TN", task_name, "/FO", "LIST", "/V"])
-        stdout = (result.stdout or "").strip()
-        stderr = (result.stderr or "").strip()
-        combined = f"{stdout}\n{stderr}".lower()
-        if "cannot find the path specified" in combined:
-            return SESSION_LIMITED_TASK_STATUS
-        if "access is denied" in combined:
-            return SESSION_LIMITED_TASK_STATUS
-        if "error:" in combined and not stdout:
-            return f"UNAVAILABLE (schtasks query failed in current session; run: {TASK_HELP_COMMAND})"
-        if result.returncode != 0:
-            if stderr:
-                return f"UNAVAILABLE (schtasks: {stderr}; run: {TASK_HELP_COMMAND})"
-            continue
-        if stdout:
-            return _summarize_schtasks_output(stdout)
-    return f"NOT_INSTALLED_OR_INVISIBLE (check with: {TASK_HELP_COMMAND})"
+
+
 def get_firebase_status() -> str:
     sdk_installed = importlib.util.find_spec("firebase_admin") is not None
     cred_path = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "").strip()
@@ -126,6 +95,8 @@ def get_firebase_status() -> str:
     if cred_path and not cred_exists:
         return f"CREDENTIALS_NOT_FOUND ({cred_path})"
     return "CREDENTIALS_MISSING (set GOOGLE_APPLICATION_CREDENTIALS or run gcloud auth application-default login)"
+
+
 def get_report_status(today: str) -> dict[str, str]:
     expected = {
         "daily_report": REPORT_DIR / f"daily_report_{today}.md",
@@ -137,11 +108,15 @@ def get_report_status(today: str) -> dict[str, str]:
     for key, path in expected.items():
         status[key] = "OK" if path.exists() else "MISSING"
     return status
+
+
 def get_recent_outputs(limit: int = 5) -> list[str]:
     if not REPORT_DIR.exists():
         return []
     files = sorted(REPORT_DIR.glob("*"), key=lambda path: path.stat().st_mtime, reverse=True)
     return [f"{path.name} ({datetime.fromtimestamp(path.stat().st_mtime).strftime('%Y-%m-%d %H:%M:%S')})" for path in files[:limit]]
+
+
 def get_activity_rules_status() -> dict[str, object]:
     payload = load_rules()
     rule_ids = active_rule_ids(payload)
@@ -156,6 +131,8 @@ def get_activity_rules_status() -> dict[str, object]:
         "high_count": high_count,
         "rule_ids": rule_ids,
     }
+
+
 def run_smoke_test() -> str:
     if not VENV_PYTHON.exists():
         return "SKIPPED (.venv missing)"
@@ -165,16 +142,22 @@ def run_smoke_test() -> str:
         text=True,
     )
     return "PASS" if result.returncode == 0 else f"FAIL (exit={result.returncode})"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Health check for yingyue-system and host")
     parser.add_argument("--run-smoke", action="store_true", help="Run smoke test")
     parser.add_argument("--json", action="store_true", help="Output JSON")
     return parser.parse_args()
+
+
 def main() -> int:
+    configure_stdout()
     args = parse_args()
     disk = shutil.disk_usage(PROJECT_ROOT)
     now = datetime.now().strftime("%Y-%m-%d")
     report_status = get_report_status(now)
+    task_snapshot = get_task_snapshot(TASK_NAME)
     summary = {
         "timestamp": datetime.now().isoformat(timespec="seconds"),
         "windows": get_windows_version(),
@@ -185,7 +168,8 @@ def main() -> int:
         "cpu_cores": os.cpu_count() or 1,
         "disk_free_gb": round(disk.free / (1024**3), 1),
         "disk_total_gb": round(disk.total / (1024**3), 1),
-        "task_status": get_task_status(),
+        "task_status": str(task_snapshot.get("summary", "")),
+        "task_details": task_snapshot,
         "firebase": get_firebase_status(),
         "reports_today": report_status,
         "recent_outputs": get_recent_outputs(),
@@ -194,10 +178,9 @@ def main() -> int:
     if args.run_smoke:
         summary["smoke_test"] = run_smoke_test()
     if args.json:
-        payload = json.dumps(summary, ensure_ascii=False, indent=2)
-        sys.stdout.buffer.write(payload.encode(sys.stdout.encoding or "utf-8", errors="replace"))
-        sys.stdout.buffer.write(b"\n")
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
         return 0
+
     print(to_console_text("[YingYue Health Check]"))
     print_line("Time", summary["timestamp"])
     print_line("Windows", summary["windows"])
@@ -206,6 +189,7 @@ def main() -> int:
     print_line("CPU Cores", str(summary["cpu_cores"]))
     print_line("Disk Free", f"{summary['disk_free_gb']} GB / {summary['disk_total_gb']} GB")
     print_line("Task", summary["task_status"])
+    print_line("Task Verify", str(task_snapshot.get("verify_command", "")))
     print_line("Firebase", summary["firebase"])
     print(to_console_text("- Reports Today:"))
     for key, value in summary["reports_today"].items():
@@ -222,9 +206,7 @@ def main() -> int:
     for line in summary["recent_outputs"]:
         print(to_console_text(f"  - {line}"))
     return 0
+
+
 if __name__ == "__main__":
     raise SystemExit(main())
-
-
-
-

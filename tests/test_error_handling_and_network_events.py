@@ -53,6 +53,21 @@ def test_philosophy_search_long_query():
     assert len(result) == 0
 
 
+def test_startup_backfills_philosophy_seed_when_table_is_empty():
+    """startup 應該在哲學資料為空時自動補 seed"""
+    initialize_db()
+    with db_connection() as conn:
+        conn.execute("DELETE FROM philosophy_entries")
+        conn.commit()
+
+    api.startup()
+
+    with db_connection() as conn:
+        count = conn.execute("SELECT COUNT(*) FROM philosophy_entries").fetchone()[0]
+
+    assert count > 0
+
+
 def test_trends_summary_returns_consistent_format():
     """趨勢摘要應該返回一致的格式"""
     _seed_pipeline_once()
