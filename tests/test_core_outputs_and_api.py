@@ -129,12 +129,46 @@ def test_http_endpoints():
     assert isinstance(r.json(), list)
 
 
+def test_assistant_frontend_mentions_supported_philosophy_search_fields():
+    content = Path('apps/frontend/ai_assistant/index.html').read_text(encoding='utf-8')
+
+    assert '留空可直接查看目前哲學條目' in content
+    assert 'title、author、school、era、summary、keywords' in content
+
+
+def test_assistant_context_always_returns_non_empty_deduped_prompts():
+    api.startup()
+    context = api.assistant_context()
+    prompts = context.get('suggested_prompts', [])
+
+    assert isinstance(prompts, list)
+    assert prompts
+    assert len(prompts) == len(set(prompts))
+    assert context.get('prompt_count') == len(prompts)
+
+
+def test_assistant_frontend_has_prompt_fallback_builder():
+    content = Path('apps/frontend/ai_assistant/index.html').read_text(encoding='utf-8')
+
+    assert 'function buildFallbackPrompts(data)' in content
+    assert 'state.prompts=serverPrompts.length?serverPrompts:buildFallbackPrompts(d);' in content
+
+
 
 def test_philosophy_search_unlikely_query_returns_list():
     api.startup()
     result = api.search_philosophy("zzzz_unlikely_hit_20260306")
     assert isinstance(result, list)
     assert len(result) <= 20
+
+
+def test_philosophy_search_matches_school_and_era_fields():
+    api.startup()
+    school_result = api.search_philosophy("German")
+    era_result = api.search_philosophy("Modern")
+
+    assert any(item["author"] == "Immanuel Kant" for item in school_result)
+    assert any(item["author"] == "Friedrich Nietzsche" for item in era_result)
 
 
 def test_score_topics_logic():

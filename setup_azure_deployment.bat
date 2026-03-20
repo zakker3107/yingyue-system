@@ -9,6 +9,7 @@ set RESOURCE_GROUP=yingyue-rg
 set LOCATION=eastasia
 set APP_NAME=yingyue-system
 set PLAN_NAME=yingyue-plan
+set PYTHON_RUNTIME=PYTHON:3.14
 
 REM 創建資源組
 echo 創建資源組 %RESOURCE_GROUP%...
@@ -20,7 +21,9 @@ az appservice plan create --name %PLAN_NAME% --resource-group %RESOURCE_GROUP% -
 
 REM 創建 Web App
 echo 創建 Web App...
-az webapp create --name %APP_NAME% --resource-group %RESOURCE_GROUP% --plan %PLAN_NAME% --runtime "PYTHON:3.14"
+echo 使用 Python Runtime: %PYTHON_RUNTIME%
+echo 如需查詢最新可用版本，可執行: az webapp list-runtimes --os linux --output table
+az webapp create --name %APP_NAME% --resource-group %RESOURCE_GROUP% --plan %PLAN_NAME% --runtime "%PYTHON_RUNTIME%"
 
 REM 設定應用設定
 echo 設定應用設定...

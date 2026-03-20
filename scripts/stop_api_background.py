@@ -14,6 +14,11 @@ def main() -> int:
     status = get_runtime_status()
     pid = int(status.get("pid", 0) or 0)
 
+    if status.get("managed") and status.get("ownership_unverified"):
+        print("[WARN] YingYue API metadata exists, but this session cannot verify process ownership.")
+        print(f"[WARN] PID={pid} was not terminated automatically to avoid stopping an unrelated process.")
+        return 1
+
     if status.get("managed") and status.get("running") and not status.get("stale"):
         if terminate_pid(pid):
             remove_runtime()

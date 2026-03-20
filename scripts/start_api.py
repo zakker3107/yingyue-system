@@ -103,8 +103,8 @@ class YingYueHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/philosophy/search":
             q = query.get("q", [""])[0]
-            if len(q) < 2:
-                self._send_json({"error": "q must be at least 2 chars"}, status=400)
+            if q and len(q.strip()) < 2:
+                self._send_json({"error": "q must be at least 2 chars when provided"}, status=400)
                 return
             self._send_json(api.search_philosophy(q=q))
             return

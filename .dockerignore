@@ -69,7 +69,14 @@ dist/
 # Test files
 .coverage
 .pytest_cache/
+.pytest_codex_tmp/
+.pytest_codex_tmp_unit/
+.pytest_run_*/
+.pytest_tmp/
+codex_tmp_pytest/
+pytest-cache-files-*/
 tests/__pycache__/
+tests/_pytest_runtime/
 
 # Documentation
 docs/_build/

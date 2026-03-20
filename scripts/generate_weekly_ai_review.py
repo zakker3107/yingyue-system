@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 import unicodedata
 import zipfile
 from collections import Counter
@@ -12,6 +13,7 @@ from typing import Any
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 REPORT_DIR = PROJECT_ROOT / "data" / "processed" / "reports"
+DEFAULT_EXPORT_ROOT = PROJECT_ROOT.parents[1] / "DATA" / "data" / "imports"
 
 TASK_TERMS: dict[str, tuple[str, ...]] = {
     "analysis": ("analysis", "analyze", "review", "optimiz", "summary", "report"),
@@ -46,7 +48,11 @@ class ConversationRecord:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate weekly AI usage review from a chat export zip")
-    parser.add_argument("--export", required=True, help="Path to exported zip or extracted folder")
+    parser.add_argument(
+        "--export",
+        default="",
+        help="Path to exported zip or extracted folder. Defaults to the newest chat_export_* folder under DATA/data/imports when available.",
+    )
     parser.add_argument("--anchor-date", default="", help="Anchor date in YYYY-MM-DD. Defaults to local today.")
     parser.add_argument("--days", type=int, default=7, help="How many days to include, ending on anchor date.")
     parser.add_argument(
@@ -90,6 +96,32 @@ def _load_conversations(export_path: Path) -> list[dict[str, Any]]:
             with zf.open(name) as handle:
                 conversations.extend(json.load(handle))
     return conversations
+
+
+def _looks_like_export_dir(path: Path) -> bool:
+    return path.is_dir() and any(path.glob("conversations-*.json"))
+
+
+def _looks_like_export_zip(path: Path) -> bool:
+    return path.is_file() and path.suffix.lower() == ".zip" and "export" in path.stem.lower()
+
+
+def _resolve_export_path(raw_export: str) -> Path:
+    if raw_export:
+        return Path(raw_export).expanduser().resolve()
+
+    candidates: list[Path] = []
+    if DEFAULT_EXPORT_ROOT.is_dir():
+        candidates.extend(path for path in DEFAULT_EXPORT_ROOT.iterdir() if _looks_like_export_dir(path))
+        candidates.extend(path for path in DEFAULT_EXPORT_ROOT.glob("*.zip") if _looks_like_export_zip(path))
+
+    if not candidates:
+        raise SystemExit(
+            "No export path provided and no default chat export found under "
+            f"{DEFAULT_EXPORT_ROOT}. Pass --export with a zip or extracted folder."
+        )
+
+    return max(candidates, key=lambda path: path.stat().st_mtime)
 
 
 def _message_text(message: dict[str, Any]) -> tuple[str, int]:
@@ -302,7 +334,7 @@ def render_markdown(summary: dict[str, Any]) -> str:
 
 def main() -> int:
     args = parse_args()
-    export_path = Path(args.export).expanduser().resolve()
+    export_path = _resolve_export_path(args.export)
     anchor = date.fromisoformat(args.anchor_date) if args.anchor_date else datetime.now().astimezone().date()
     start = anchor - timedelta(days=max(args.days - 1, 0))
 

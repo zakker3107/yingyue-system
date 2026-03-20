@@ -1,6 +1,6 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 
 from modules.reporting.strategic import build_strategic_weekly_report, week_label_from_date
 from services.core.settings import REPORT_DIR
@@ -50,7 +50,7 @@ def _fetch_observations(limit: int = 7) -> list[dict[str, object]]:
 
 
 def generate_strategic_weekly_report(report_date: str | None = None) -> dict[str, str]:
-    now = datetime.now(timezone.utc)
+    now = datetime.now().astimezone()
     date_label = report_date or now.date().isoformat()
     week_label = week_label_from_date(date_label)
 
@@ -78,3 +78,4 @@ def generate_strategic_weekly_report(report_date: str | None = None) -> dict[str
         "strategic_report": str(dated_path),
         "strategic_report_latest": str(latest_path),
     }
+
