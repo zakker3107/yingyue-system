@@ -1,5 +1,6 @@
 ﻿from __future__ import annotations
 
+import re
 from collections import Counter
 from datetime import datetime
 
@@ -11,45 +12,33 @@ TOPIC_LABELS = {
     "economy": "經濟",
     "technology": "科技",
     "world": "世界",
+    "politics": "政治",
+    "society": "社會",
+    "culture": "文化",
 }
 
-ECONOMY_KEYWORDS = (
-    "oil",
-    "inflation",
-    "price",
-    "prices",
-    "market",
-    "economy",
-    "tariff",
-    "trade",
-    "ship",
-    "supply",
-    "cocoa",
-)
-TECH_KEYWORDS = (
-    "ai",
-    "model",
-    "chip",
-    "semiconductor",
-    "platform",
-    "software",
-    "data",
-    "digital",
-    "verify",
-    "online",
-)
-POLITICAL_KEYWORDS = (
-    "war",
-    "attack",
-    "leader",
-    "election",
-    "embassy",
-    "police",
-    "government",
-    "policy",
-    "amnesty",
-    "terror",
-)
+CATEGORY_RULES = {
+    "economy": {
+        "include": ("oil", "inflation", "price", "prices", "market", "tariff", "trade", "ship", "supply", "factory"),
+        "exclude": ("prize", "supermarket"),
+    },
+    "technology": {
+        "include": ("ai", "model", "chip", "semiconductor", "platform", "software", "data", "digital", "compute"),
+        "exclude": ("aid",),
+    },
+    "politics": {
+        "include": ("war", "attack", "leader", "election", "embassy", "police", "government", "policy", "terror", "strike"),
+        "exclude": ("policy debate show",),
+    },
+    "society": {
+        "include": ("court", "compensation", "rights", "protest", "public", "family", "school", "hospital"),
+        "exclude": (),
+    },
+    "culture": {
+        "include": ("oscars", "football", "world cup", "film", "award", "sport", "festival"),
+        "exclude": (),
+    },
+}
 CITY_KEYWORDS = {
     "交通與物流": ("oil", "ship", "transport", "flight", "traffic", "delivery"),
     "能源與公共成本": ("oil", "energy", "power", "electricity", "price", "inflation"),
@@ -63,6 +52,20 @@ SYSTEM_KEYWORDS = {
     "安全風險與制度韌性": ("war", "attack", "terror", "embassy", "police"),
 }
 
+FOCUS_AREA_HINTS = {
+    "economy": "先確認是否改變價格、供應鏈或企業成本。",
+    "technology": "先確認是否改變部署節奏、成本結構或治理責任。",
+    "politics": "先確認是否擴散成政策、外交或安全層級的後續反應。",
+    "society": "先確認是否影響社會信任、公共服務或制度正當性。",
+    "culture": "先確認是否只是話題事件，或已外溢到公共討論與城市運作。",
+}
+
+
+def _contains_term(text: str, term: str) -> bool:
+    if " " in term:
+        return term in text
+    return re.search(rf"\b{re.escape(term)}\b", text) is not None
+
 
 def _topic_name(bucket: str) -> str:
     return TOPIC_LABELS.get(bucket, bucket)
@@ -70,7 +73,13 @@ def _topic_name(bucket: str) -> str:
 
 def _contains_any(text: str, terms: tuple[str, ...]) -> bool:
     lowered = text.lower()
-    return any(term in lowered for term in terms)
+    return any(_contains_term(lowered, term) for term in terms)
+
+
+def _matches_rule(text: str, include: tuple[str, ...], exclude: tuple[str, ...]) -> int:
+    if any(_contains_term(text, term) for term in exclude):
+        return 0
+    return sum(1 for term in include if _contains_term(text, term))
 
 
 def _format_percent(value: object) -> str:
@@ -83,9 +92,8 @@ def _format_percent(value: object) -> str:
 def _classify_item(item: dict[str, str]) -> str:
     text = f"{item.get('title', '')} {item.get('summary', '')}".lower()
     scores = {
-        "economy": sum(1 for token in ECONOMY_KEYWORDS if token in text),
-        "technology": sum(1 for token in TECH_KEYWORDS if token in text),
-        "politics": sum(1 for token in POLITICAL_KEYWORDS if token in text),
+        label: _matches_rule(text, rule["include"], rule["exclude"])
+        for label, rule in CATEGORY_RULES.items()
     }
     category, score = max(scores.items(), key=lambda pair: pair[1])
     if score == 0:
@@ -94,6 +102,8 @@ def _classify_item(item: dict[str, str]) -> str:
             return "technology"
         if topic in {"economy"}:
             return "economy"
+        if topic in {"world"}:
+            return "society"
         return "politics"
     return category
 
@@ -112,9 +122,17 @@ def _pick_signals(news: list[dict[str, str]], mapping: dict[str, tuple[str, ...]
 
 def _line_from_observation(observation: dict[str, object]) -> str:
     return (
-        f"{observation['observed_date']}：主趨勢 {observation['top_topic']}，"
-        f"次軸 {observation['second_topic']}，情緒 {observation['sentiment_label']}。"
+        f"{observation['observed_date']}：主趨勢 {_topic_name(str(observation['top_topic']))}，"
+        f"次軸 {_topic_name(str(observation['second_topic']))}，情緒 {observation['sentiment_label']}。"
     )
+
+
+def _source_profile(news: list[dict[str, str]]) -> tuple[int, str, float]:
+    counter = Counter(str(item.get("source") or "未知來源") for item in news)
+    if not counter:
+        return 0, "未知來源", 0.0
+    top_source, top_count = counter.most_common(1)[0]
+    return len(counter), top_source, round(top_count / len(news), 3)
 
 
 def build_strategic_weekly_report(
@@ -135,10 +153,14 @@ def build_strategic_weekly_report(
 
     categories = {"economy": [], "technology": [], "politics": []}
     for item in news:
-        categories[_classify_item(item)].append(item)
+        category = _classify_item(item)
+        if category not in categories:
+            continue
+        categories[category].append(item)
 
     city_signals = _pick_signals(news, CITY_KEYWORDS, "城市層訊號仍分散，先追蹤價格、物流與數位服務摩擦。")
     system_signals = _pick_signals(news, SYSTEM_KEYWORDS, "系統層訊號仍分散，先追蹤制度邊界與供應鏈傳導。")
+    unique_sources, top_source, top_source_ratio = _source_profile(news)
 
     summary_lines = [
         (
@@ -153,6 +175,10 @@ def build_strategic_weekly_report(
         (
             f"城市層面建議優先追蹤 {'、'.join(city_signals)}；系統層面則聚焦 {'、'.join(system_signals)}。"
         ),
+        (
+            f"本週樣本共 {unique_sources} 個來源；其中 {top_source} 佔比 {top_source_ratio:.0%}，"
+            f"{'可作為交叉驗證基礎' if top_source_ratio < 0.7 else '仍需補更多交叉來源'}。"
+        ),
     ]
 
     focus_items = news[:5]
@@ -162,6 +188,7 @@ def build_strategic_weekly_report(
     lines.append(f"- 生成時間: {generated_at}")
     lines.append(f"- 覆蓋觀察天數: {len(observations)}")
     lines.append(f"- 納入新聞樣本: {len(news)}")
+    lines.append(f"- 來源概況: {unique_sources} 個來源，最高集中 {top_source} / {top_source_ratio:.0%}")
     lines.append("")
 
     lines.append("## 摘要")
@@ -195,14 +222,13 @@ def build_strategic_weekly_report(
     for idx, item in enumerate(focus_items, start=1):
         category = _classify_item(item)
         lines.append(f"{idx}. {item['title']}")
-        lines.append(f"   - 類別: {category} | 來源: {item['source']} | 主題: {item['topic']}")
+        lines.append(f"   - 類別: {_topic_name(category)} | 來源: {item['source']} | 主題: {_topic_name(item['topic'])}")
         lines.append(f"   - 事件摘要: {item['summary']}")
-        lines.append(
-            f"   - 日常影響: 建議觀察此事件是否回傳到價格、就業、數位服務或公共安全感受。"
-        )
-        lines.append(
-            f"   - 城市/系統: 檢查它是否改變城市成本結構，或推動監管、供應鏈與制度邊界調整。"
-        )
+        city_impact = next((label for label, terms in CITY_KEYWORDS.items() if _contains_any(f"{item['title']} {item['summary']}", terms)), "公共感受與服務穩定度")
+        system_impact = next((label for label, terms in SYSTEM_KEYWORDS.items() if _contains_any(f"{item['title']} {item['summary']}", terms)), "制度邊界與跨部門傳導")
+        lines.append(f"   - 影響對象: 城市面關注 {city_impact}；系統面關注 {system_impact}")
+        lines.append(f"   - 傳導路徑: {FOCUS_AREA_HINTS.get(category, '先確認是否已從新聞敘事轉為制度或成本傳導。')}")
+        lines.append("   - 觀察指標: 來源數量、是否出現政策回應、是否轉成價格/物流/公共安全訊號")
     lines.append("")
 
     lines.append("## 四、近一週觀察軌跡")
@@ -224,9 +250,9 @@ def build_strategic_weekly_report(
     lines.append("")
 
     lines.append("## 六、固定輸出摘要")
-    lines.append(f"- Dominant topic: {dominant_topic}")
-    lines.append(f"- Top trend: {top_trend.get('bucket', 'general')} / {_format_percent(top_trend.get('metric_value'))}")
-    lines.append(f"- Second trend: {second_trend.get('bucket', 'general')} / {_format_percent(second_trend.get('metric_value'))}")
+    lines.append(f"- Dominant topic: {_topic_name(dominant_topic)}")
+    lines.append(f"- Top trend: {_topic_name(str(top_trend.get('bucket', 'general')))} / {_format_percent(top_trend.get('metric_value'))}")
+    lines.append(f"- Second trend: {_topic_name(str(second_trend.get('bucket', 'general')))} / {_format_percent(second_trend.get('metric_value'))}")
     lines.append(f"- Avg sentiment: {avg_sentiment}")
     lines.append(f"- City signals: {'、'.join(city_signals)}")
     lines.append(f"- System signals: {'、'.join(system_signals)}")

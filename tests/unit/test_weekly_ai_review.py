@@ -1,5 +1,6 @@
 from pathlib import Path
 import sys
+from datetime import datetime
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
@@ -40,3 +41,29 @@ def test_analyze_conversation_sanitizes_title_and_message_text():
     assert record.title == 'BadTitle'
     assert record.user_chars == len('Need review')
     assert record.assistant_chars == len('Done now')
+
+
+def test_resolve_export_path_picks_newest_export_dir(tmp_path, monkeypatch):
+    export_root = tmp_path / "imports"
+    older = export_root / "chat_export_20260301"
+    newer = export_root / "chat_export_20260307"
+    older.mkdir(parents=True)
+    newer.mkdir(parents=True)
+    (older / "conversations-000.json").write_text("[]", encoding="utf-8")
+    (newer / "conversations-000.json").write_text("[]", encoding="utf-8")
+
+    older_ts = datetime(2026, 3, 1, 8, 0).timestamp()
+    newer_ts = datetime(2026, 3, 7, 8, 0).timestamp()
+    older.touch()
+    newer.touch()
+    (older / "conversations-000.json").touch()
+    (newer / "conversations-000.json").touch()
+    import os
+    os.utime(older, (older_ts, older_ts))
+    os.utime(newer, (newer_ts, newer_ts))
+
+    monkeypatch.setattr(weekly_review, "DEFAULT_EXPORT_ROOT", export_root)
+
+    resolved = weekly_review._resolve_export_path("")
+
+    assert resolved == newer

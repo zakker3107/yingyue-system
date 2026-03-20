@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import os
@@ -7,6 +7,7 @@ from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 
+from services.core.kb.philosophy_kb import ensure_philosophy_entries
 from services.core.settings import REPORT_DIR
 from services.core.storage import db_connection, initialize_db
 
@@ -52,11 +53,16 @@ def search_philosophy(q: str) -> list[dict[str, str]]:
             """
             SELECT title, author, school, era, summary, keywords
             FROM philosophy_entries
-            WHERE lower(title) LIKE ? OR lower(author) LIKE ? OR lower(summary) LIKE ? OR lower(keywords) LIKE ?
+            WHERE lower(title) LIKE ?
+               OR lower(author) LIKE ?
+               OR lower(school) LIKE ?
+               OR lower(era) LIKE ?
+               OR lower(summary) LIKE ?
+               OR lower(keywords) LIKE ?
             ORDER BY id DESC
             LIMIT 20
             """,
-            (pattern, pattern, pattern, pattern),
+            (pattern, pattern, pattern, pattern, pattern, pattern),
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -253,6 +259,11 @@ def task_overview() -> dict[str, object]:
                 "status": "READY",
                 "schedule": "Every day 08:30",
                 "outputs": [reports.get("daily", {}), reports.get("status", {})],
+                "actions": [
+                    {"label": "Run MVP", "command": "python scripts\\run_mvp.py"},
+                    {"label": "Generate Daily Report", "command": "python scripts\\generate_daily_report.py"},
+                    {"label": "Open Health", "path": "/health"},
+                ],
             },
             {
                 "id": "strategic-report",
@@ -261,6 +272,10 @@ def task_overview() -> dict[str, object]:
                 "status": "AVAILABLE",
                 "schedule": "On demand / after pipeline run",
                 "outputs": [reports.get("strategic", {}), reports.get("weekly", {})],
+                "actions": [
+                    {"label": "Generate Strategic Report", "command": "python scripts\\generate_strategic_report.py"},
+                    {"label": "Open Latest Strategic", "path": "/strategic-report/latest"},
+                ],
             },
             {
                 "id": "health-report",
@@ -269,6 +284,11 @@ def task_overview() -> dict[str, object]:
                 "status": "AVAILABLE",
                 "schedule": "On demand",
                 "outputs": [reports.get("status", {})],
+                "actions": [
+                    {"label": "Run Health Check", "command": "python scripts\\health_check.py --run-smoke"},
+                    {"label": "Generate Status Report", "command": "python scripts\\status_report.py"},
+                    {"label": "Open Monitor Snapshot", "path": "/monitor/snapshot"},
+                ],
             },
             {
                 "id": "agent-pipeline",
@@ -277,32 +297,96 @@ def task_overview() -> dict[str, object]:
                 "status": "AVAILABLE",
                 "schedule": "After pipeline run",
                 "outputs": [reports.get("agent_pipeline", {})],
+                "actions": [
+                    {"label": "Open Agent Snapshot", "path": "/agents/latest"},
+                    {"label": "Open Task Overview", "path": "/tasks/overview"},
+                ],
             },
         ],
     }
 
-
 def assistant_context() -> dict[str, object]:
     station = station_summary()
-    top_trends = station.get("top_trends", [])[:3]
+    raw_top_trends = station.get("top_trends", [])[:5]
     latest = station.get("latest_news") or {}
-    prompts = []
-    if latest:
-        prompts.append(f"請從〈{latest.get('title', '')}〉延伸二階影響與城市層傳導。")
+    reports = station.get("reports", {})
+
+    ready_reports = [
+        {"name": name, **report}
+        for name, report in reports.items()
+        if isinstance(report, dict) and "error" not in report
+    ]
+    missing_reports = [
+        {"name": name, **report}
+        for name, report in reports.items()
+        if isinstance(report, dict) and "error" in report
+    ]
+
+    top_trends = []
+    seen_metrics: set[str] = set()
+    for trend in raw_top_trends:
+        metric_name = str(trend.get("metric_name") or "").strip()
+        if not metric_name or metric_name in seen_metrics:
+            continue
+        seen_metrics.add(metric_name)
+        top_trends.append(trend)
+        if len(top_trends) >= 3:
+            break
+
+    prompts: list[str] = []
+    latest_title = str(latest.get("title") or "").strip()
+    if latest_title:
+        prompts.append(f"請從〈{latest_title}〉整理 3 個重點、2 個風險、1 個下一步行動。")
+
     for trend in top_trends:
-        prompts.append(f"請解釋趨勢 {trend.get('metric_name', '')} 的意義與風險。")
-    prompts.append("請把最新策略週報濃縮成三條可執行重點。")
+        metric_name = str(trend.get("metric_name") or "").strip()
+        if metric_name:
+            prompts.append(f"請解釋趨勢 {metric_name} 的意義、風險與可執行應對。")
+
+    ready_report_names = {str(item.get("name") or "") for item in ready_reports}
+    if "strategic" in ready_report_names:
+        prompts.append("請把最新策略週報濃縮成三條可執行重點。")
+    if "daily" in ready_report_names:
+        prompts.append("請把最新日報整理成今日優先處理清單。")
+
+    prompts.extend(
+        [
+            "請根據目前新聞、趨勢與報表，整理今天最值得追蹤的 3 件事。",
+            "請把目前工作台資訊改寫成一段可直接貼給 AI 的分析 prompt。",
+        ]
+    )
+
+    deduped_prompts: list[str] = []
+    seen_prompts: set[str] = set()
+    for prompt in prompts:
+        normalized = prompt.strip()
+        if not normalized or normalized in seen_prompts:
+            continue
+        seen_prompts.add(normalized)
+        deduped_prompts.append(normalized)
+
+    focus = "追蹤最新訊號"
+    if top_trends:
+        focus = f"聚焦 {top_trends[0].get('metric_name', '關鍵趨勢')}"
+    elif latest:
+        focus = "拆解最新新聞後續影響"
+    elif ready_reports:
+        focus = "優先整理現有報表結論"
+
     return {
         "generated_at": datetime.now().astimezone().isoformat(timespec="seconds"),
         "task_name": TASK_NAME,
+        "focus": focus,
+        "prompt_count": len(deduped_prompts),
         "summary": {
             "latest_news": latest,
             "top_trends": top_trends,
-            "report_status": station.get("reports", {}),
+            "report_status": reports,
+            "ready_reports": ready_reports,
+            "missing_reports": missing_reports,
         },
-        "suggested_prompts": prompts,
+        "suggested_prompts": deduped_prompts,
     }
-
 
 def monitor_snapshot() -> dict[str, object]:
     station = station_summary()
@@ -323,3 +407,6 @@ def monitor_snapshot() -> dict[str, object]:
 
 def startup() -> None:
     initialize_db()
+    ensure_philosophy_entries()
+
+

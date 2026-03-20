@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from services.api import main as api
+from apps.api import routes
 
-_ROUTE_EXPORTS = (
+
+EXPECTED_EXPORTS = {
     "assistant_context",
     "health",
     "latest_agent_pipeline",
@@ -20,9 +21,11 @@ _ROUTE_EXPORTS = (
     "station_summary",
     "task_overview",
     "trends_summary",
-)
+}
 
-for _name in _ROUTE_EXPORTS:
-    globals()[_name] = getattr(api, _name)
 
-__all__ = list(_ROUTE_EXPORTS)
+def test_routes_exports_match_public_api_surface():
+    assert set(routes.__all__) == EXPECTED_EXPORTS
+
+    for name in EXPECTED_EXPORTS:
+        assert hasattr(routes, name)

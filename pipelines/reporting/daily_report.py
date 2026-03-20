@@ -1,8 +1,9 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import csv
+import re
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime
 
 from modules.analysis.sentiment import sentiment_snapshot
 from services.core.settings import REPORT_DIR
@@ -27,12 +28,67 @@ TOPIC_LABELS = {
 }
 
 SECOND_ORDER_IMPACT_RULES = {
-    "供應鏈": ["supply", "ship", "factory", "export", "shortage", "cocoa", "oil"],
-    "價格壓力": ["price", "prices", "inflation", "cost", "market", "shares"],
-    "政策反應": ["law", "policy", "regulation", "amnesty", "licence", "verify"],
-    "安全風險": ["war", "attack", "terror", "gunfire", "explosion", "security"],
-    "社會信任": ["public", "broadcaster", "election", "embassy", "police"],
-    "平台治理": ["ai", "platform", "porn", "monitor", "var", "online"],
+    "供應鏈": {
+        "include": ["supply", "ship", "factory", "export", "shortage", "cargo", "port", "logistics"],
+        "exclude": ["scholarship", "relationship", "championship"],
+    },
+    "價格壓力": {
+        "include": ["price", "prices", "inflation", "cost", "market", "tariff", "fuel"],
+        "exclude": ["prize", "priced in"],
+    },
+    "政策反應": {
+        "include": ["law", "policy", "regulation", "sanction", "ban", "tariff", "ceasefire talks"],
+        "exclude": ["policy maker profile"],
+    },
+    "安全風險": {
+        "include": ["war", "attack", "terror", "gunfire", "explosion", "missile", "strike", "bombardment"],
+        "exclude": ["cybersecurity earnings", "security software", "post-war", "postwar"],
+    },
+    "社會信任": {
+        "include": ["public", "election", "embassy", "police", "protest", "court", "compensation", "rights"],
+        "exclude": ["publicity", "publicist"],
+    },
+    "平台治理": {
+        "include": ["ai", "platform", "model", "online", "algorithm", "moderation", "data", "privacy"],
+        "exclude": ["air india", "daily mail online"],
+    },
+}
+
+EVENT_TYPE_RULES = {
+    "地緣政治": {
+        "include": ["war", "strike", "missile", "attack", "ceasefire", "military", "border", "bombardment"],
+        "exclude": ["post-war", "postwar"],
+    },
+    "政策監管": {
+        "include": ["policy", "regulation", "law", "tariff", "sanction", "crackdown", "government"],
+        "exclude": ["policy debate show"],
+    },
+    "產業科技": {
+        "include": ["ai", "model", "chip", "platform", "software", "data", "robot", "compute"],
+        "exclude": ["aid"],
+    },
+    "市場供應": {
+        "include": ["market", "price", "supply", "factory", "ship", "oil", "inflation", "trade"],
+        "exclude": ["supermarket"],
+    },
+    "社會治理": {
+        "include": ["police", "court", "protest", "school", "hospital", "compensation", "trust"],
+        "exclude": [],
+    },
+    "文化體育": {
+        "include": ["oscars", "football", "world cup", "film", "award", "sport", "festival"],
+        "exclude": [],
+    },
+}
+
+TOPIC_EVENT_HINTS = {
+    "ai": ("產業科技", "部署速度、模型成本、治理限制"),
+    "technology": ("產業科技", "平台能力、資料治理、基礎設施壓力"),
+    "economy": ("市場供應", "價格傳導、供應鏈摩擦、政策回應"),
+    "policy": ("政策監管", "政策落地、執法尺度、跨部門協調"),
+    "security": ("地緣政治", "安全擴散、外溢風險、制度韌性"),
+    "world": ("社會治理", "社會信任、公共治理、跨境連動"),
+    "general": ("市場供應", "價格、政策與安全三線是否互相傳導"),
 }
 
 
@@ -148,21 +204,57 @@ def _topic_name(bucket: str) -> str:
     return TOPIC_LABELS.get(bucket, bucket)
 
 
+def _contains_keyword(text: str, token: str) -> bool:
+    if " " in token:
+        return token in text
+    return re.search(rf"\b{re.escape(token)}\b", text) is not None
+
+
+def _match_rule(text: str, include: list[str], exclude: list[str]) -> bool:
+    has_include = any(_contains_keyword(text, token) for token in include)
+    has_exclude = any(_contains_keyword(text, token) for token in exclude)
+    return has_include and not has_exclude
+
+
 def _top_topic_pair(trends: list[dict[str, str]]) -> tuple[dict[str, str], dict[str, str]]:
     top_trend = trends[0] if trends else {"bucket": "general", "metric_value": 0}
     second_trend = trends[1] if len(trends) > 1 else {"bucket": "general", "metric_value": 0}
     return top_trend, second_trend
 
 
+def _classify_event_type(item: dict[str, str]) -> str:
+    text = f"{item.get('title', '')} {item.get('summary', '')}".lower()
+    scores = {
+        label: (
+            sum(1 for token in rule["include"] if _contains_keyword(text, token))
+            if not any(_contains_keyword(text, token) for token in rule["exclude"])
+            else 0
+        )
+        for label, rule in EVENT_TYPE_RULES.items()
+    }
+    category, score = max(scores.items(), key=lambda pair: pair[1])
+    if score > 0:
+        return category
+
+    topic = str(item.get("topic") or "general")
+    return TOPIC_EVENT_HINTS.get(topic, TOPIC_EVENT_HINTS["general"])[0]
+
+
 def _infer_second_order_tags(item: dict[str, str]) -> list[str]:
     text = f"{item.get('title', '')} {item.get('summary', '')}".lower()
-    tags = [label for label, keywords in SECOND_ORDER_IMPACT_RULES.items() if any(token in text for token in keywords)]
+    tags = [
+        label
+        for label, rule in SECOND_ORDER_IMPACT_RULES.items()
+        if _match_rule(text, rule["include"], rule["exclude"])
+    ]
     if not tags:
         topic = str(item.get("topic") or "general")
-        if topic == "technology":
+        if topic in {"technology", "ai"}:
             tags = ["平台治理"]
-        elif topic == "world":
+        elif topic in {"world", "policy"}:
             tags = ["社會信任"]
+        elif topic == "economy":
+            tags = ["價格壓力"]
         else:
             tags = ["持續觀察"]
     return tags[:3]
@@ -211,24 +303,179 @@ def _build_trend_pulse(samples: list[dict[str, str]]) -> list[str]:
     return lines
 
 
+def _build_time_comparison(
+    current_trends: list[dict[str, str]],
+    sentiment: dict[str, float | str | int],
+    samples: list[dict[str, str]],
+) -> list[str]:
+    if not samples:
+        return ["尚無歷史觀察可比較，先把今天作為基準日。"]
+
+    latest_previous = samples[0]
+    lines = [
+        (
+            f"相較 {latest_previous['observed_date']}，主趨勢"
+            f"{'維持' if latest_previous['top_topic'] == (current_trends[0]['bucket'] if current_trends else 'general') else '轉換為'}"
+            f" {_topic_name(current_trends[0]['bucket'] if current_trends else 'general')}。"
+        )
+    ]
+
+    sentiment_delta = round(float(sentiment["score"]) - float(latest_previous["sentiment_score"]), 3)
+    if sentiment_delta > 0.15:
+        lines.append(f"情緒較昨日回升 {sentiment_delta}，風險偏好有些修復。")
+    elif sentiment_delta < -0.15:
+        lines.append(f"情緒較昨日再走弱 {abs(sentiment_delta)}，今天結論應更保守。")
+    else:
+        lines.append("情緒相較昨日變化有限，建議沿用前一日的驗證框架。")
+
+    if len(samples) >= 3:
+        avg_prev_sentiment = round(sum(float(item["sentiment_score"]) for item in samples[:3]) / 3, 3)
+        drift = round(float(sentiment["score"]) - avg_prev_sentiment, 3)
+        direction = "高於" if drift >= 0 else "低於"
+        lines.append(f"今日情緒指數 {direction} 近三日均值 {abs(drift)}，可用來判斷是短暫波動還是持續偏移。")
+
+    return lines
+
+
+def _build_source_profile(news: list[dict[str, str]]) -> dict[str, object]:
+    source_counter = Counter(str(item.get("source") or "未知來源") for item in news)
+    total = len(news) or 1
+    top_source, top_count = source_counter.most_common(1)[0] if source_counter else ("未知來源", 0)
+    concentration = round(top_count / total, 3)
+    return {
+        "unique_sources": len(source_counter),
+        "top_source": top_source,
+        "top_source_ratio": concentration,
+        "source_counts": source_counter,
+    }
+
+
+def _build_confidence_summary(
+    news: list[dict[str, str]],
+    trends: list[dict[str, str]],
+    source_profile: dict[str, object],
+) -> dict[str, object]:
+    top_bucket = trends[0]["bucket"] if trends else "general"
+    unique_sources = int(source_profile["unique_sources"])
+    top_source_ratio = float(source_profile["top_source_ratio"])
+
+    score = 40
+    if len(news) >= 8:
+        score += 15
+    if unique_sources >= 3:
+        score += 20
+    elif unique_sources == 2:
+        score += 10
+    if top_source_ratio <= 0.5:
+        score += 15
+    elif top_source_ratio >= 0.8:
+        score -= 10
+    if any(item.get("bucket") == top_bucket for item in trends[:3]):
+        score += 10
+
+    score = max(0, min(100, score))
+    if score >= 80:
+        label = "高"
+    elif score >= 60:
+        label = "中"
+    else:
+        label = "保守"
+
+    reasons = [
+        f"新聞樣本 {len(news)} 則",
+        f"來源 {unique_sources} 個",
+        f"最高集中來源 {source_profile['top_source']} 佔比 {top_source_ratio:.0%}",
+        f"主趨勢 {_topic_name(top_bucket)} 位於趨勢榜首",
+    ]
+    return {"score": score, "label": label, "reasons": reasons}
+
+
+def _focus_confidence_label(score: int) -> str:
+    if score >= 75:
+        return "高"
+    if score >= 55:
+        return "中"
+    return "保守"
+
+
+def _focus_rationale(item: dict[str, str], impacts: list[str]) -> str:
+    event_type = _classify_event_type(item)
+    if event_type == "地緣政治":
+        return "事件本身帶有安全外溢風險，需觀察是否推高能源、物流或政策反應。"
+    if event_type == "政策監管":
+        return "重點不只是事件本身，而是執法尺度是否改變平台、產業或市場邊界。"
+    if event_type == "產業科技":
+        return "應追蹤能力敘事是否轉成部署速度、成本壓力與治理責任。"
+    if event_type == "市場供應":
+        return "要確認價格訊號是否已開始往供應鏈、企業成本與消費端傳導。"
+    if "社會信任" in impacts:
+        return "需注意這類事件是否改變社會信任與公共討論的穩定度。"
+    return "先觀察事件是否從單點新聞升級成跨領域傳導。"
+
+
+def _score_focus_item(item: dict[str, str], top_bucket: str) -> int:
+    score = 40
+    impacts = _infer_second_order_tags(item)
+    event_type = _classify_event_type(item)
+    if top_bucket in {"general", "economy"} and any(tag in impacts for tag in {"價格壓力", "供應鏈", "政策反應"}):
+        score += 20
+    if top_bucket in {"ai", "technology"} and event_type == "產業科技":
+        score += 20
+    if event_type in {"地緣政治", "政策監管"}:
+        score += 15
+    if len(impacts) >= 2:
+        score += 10
+    title = str(item.get("title") or "").lower()
+    if any(token in title for token in ["war", "attack", "tariff", "ai", "market", "policy"]):
+        score += 10
+    return min(score, 95)
+
+
+def _build_focus_event_cards(news: list[dict[str, str]], trends: list[dict[str, str]]) -> list[dict[str, object]]:
+    top_bucket = trends[0]["bucket"] if trends else "general"
+    cards: list[dict[str, object]] = []
+    for item in news:
+        impacts = _infer_second_order_tags(item)
+        score = _score_focus_item(item, top_bucket)
+        cards.append(
+            {
+                "title": item["title"],
+                "link": item["link"],
+                "source": item["source"],
+                "topic": item["topic"],
+                "published_at": item["published_at"],
+                "summary": item["summary"],
+                "event_type": _classify_event_type(item),
+                "impacts": impacts,
+                "confidence_score": score,
+                "confidence_label": _focus_confidence_label(score),
+                "rationale": _focus_rationale(item, impacts),
+            }
+        )
+
+    cards.sort(key=lambda item: int(item["confidence_score"]), reverse=True)
+    return cards[:3]
+
+
 def _build_key_takeaways(
     news: list[dict[str, str]],
     trends: list[dict[str, str]],
     sentiment: dict[str, float | str | int],
 ) -> list[str]:
     top_trend, second_trend = _top_topic_pair(trends)
-    newest_news = news[0]["title"] if news else "今日沒有可用新聞樣本。"
+    focus_event = _build_focus_event_cards(news, trends)
+    newest_news = focus_event[0]["title"] if focus_event else "今日沒有可用新聞樣本。"
 
     return [
         (
-            f"全球焦點維持在 {top_trend['bucket']}（{top_trend['metric_value']}%），"
-            f"次軸為 {second_trend['bucket']}（{second_trend['metric_value']}%）。"
+            f"全球焦點維持在 {_topic_name(top_trend['bucket'])}（{top_trend['metric_value']}%），"
+            f"次軸為 {_topic_name(second_trend['bucket'])}（{second_trend['metric_value']}%）。"
         ),
         (
             f"社會情緒指數 {sentiment['score']}（{sentiment['label']}），"
             f"正負訊號比為 {_format_ratio(int(sentiment['positive_hits']), int(sentiment['negative_hits']))}。"
         ),
-        f"今日代表事件：{newest_news}。建議用事件鏈方式追蹤其二階影響。",
+        f"今日代表事件：{newest_news}。建議把它放進事件鏈，而不是單看單則新聞。",
     ]
 
 
@@ -237,7 +484,7 @@ def _build_personal_notes(
     philosophy: list[dict[str, str]],
     sentiment: dict[str, float | str | int],
 ) -> list[str]:
-    top_topic = trends[0]["bucket"] if trends else "general"
+    top_topic = _topic_name(trends[0]["bucket"] if trends else "general")
     philosophy_focus = philosophy[0] if philosophy else {"title": "Unknown", "author": "Unknown"}
 
     return [
@@ -261,8 +508,8 @@ def _build_knowledge_links(
     philosophy: list[dict[str, str]],
     notes: list[str],
 ) -> list[dict[str, str]]:
-    top_topic = trends[0]["bucket"] if trends else "general"
-    second_topic = trends[1]["bucket"] if len(trends) > 1 else "general"
+    top_topic = _topic_name(trends[0]["bucket"] if trends else "general")
+    second_topic = _topic_name(trends[1]["bucket"] if len(trends) > 1 else "general")
 
     first_philosophy = philosophy[0] if philosophy else {"title": "Ethics", "author": "Unknown"}
     second_philosophy = philosophy[1] if len(philosophy) > 1 else first_philosophy
@@ -312,38 +559,47 @@ def _build_action_items(
     news: list[dict[str, str]],
     trends: list[dict[str, str]],
     sentiment: dict[str, float | str | int],
+    focus_items: list[dict[str, object]],
+    source_profile: dict[str, object],
 ) -> list[str]:
     actions: list[str] = []
     top_bucket = trends[0]["bucket"] if trends else "general"
-    if top_bucket in {"general", "economy"}:
-        actions.append("把頭條事件拆成供應、價格、政策回應三段，觀察是否開始互相傳導。")
-    if top_bucket == "ai":
-        actions.append("追蹤 AI 敘事是否從模型能力轉向部署、成本或治理限制。")
+    focus = focus_items[0] if focus_items else None
+    if focus:
+        actions.append(
+            f"先追蹤頭條〈{focus['title']}〉，重點放在 {focus['rationale'].replace('。', '')}。"
+        )
+    if top_bucket in TOPIC_EVENT_HINTS:
+        _, hint = TOPIC_EVENT_HINTS[top_bucket]
+        actions.append(f"今日主線偏向 {_topic_name(top_bucket)}，優先驗證 {hint}。")
     if float(sentiment["score"]) <= -0.2:
         actions.append("負面情緒偏高，今天的結論先以風險盤點為主，不急著下方向判斷。")
-    if news:
+    if float(source_profile["top_source_ratio"]) >= 0.7:
+        actions.append(
+            f"目前樣本有 {float(source_profile['top_source_ratio']):.0%} 來自 {source_profile['top_source']}，請補找第二來源再下結論。"
+        )
+    elif news:
         actions.append(f"優先複查頭條〈{news[0]['title']}〉的後續更新與來源一致性。")
     return actions[:4]
 
 
-def _build_watch_items(news: list[dict[str, str]]) -> list[str]:
-    keywords = {
-        "war": "地緣衝突",
-        "attack": "安全事件",
-        "inflation": "通膨壓力",
-        "oil": "能源價格",
-        "policy": "政策變動",
-        "ai": "AI 熱點",
-    }
-    hits: list[str] = []
+def _build_watch_items(news: list[dict[str, str]], focus_items: list[dict[str, object]]) -> list[str]:
+    label_sources: dict[str, set[str]] = {}
     for item in news:
-        text = f"{item['title']} {item['summary']}".lower()
-        for token, label in keywords.items():
-            if token in text and label not in hits:
-                hits.append(label)
-    if not hits:
+        source = str(item.get("source") or "未知來源")
+        for label in _infer_second_order_tags(item):
+            label_sources.setdefault(label, set()).add(source)
+
+    if not label_sources:
         return ["今日樣本沒有明顯集中風險，維持常規監測。"]
-    return [f"關注 {label} 是否持續擴散到更多新聞來源。" for label in hits[:4]]
+
+    lines: list[str] = []
+    for label, sources in sorted(label_sources.items(), key=lambda pair: len(pair[1]), reverse=True)[:3]:
+        lines.append(f"關注 {label} 是否從目前的 {len(sources)} 個來源，擴散成更廣泛共識。")
+
+    for item in focus_items[:1]:
+        lines.append(f"追蹤〈{item['title']}〉是否在 24 小時內出現政策回應、價格變化或更多交叉報導。")
+    return lines[:4]
 
 
 def _sanitize_id(text: str) -> str:
@@ -464,7 +720,7 @@ def _write_weekly_observation_report(date_label: str) -> str:
 
     lines.append(f"- 覆蓋天數: {len(samples)}")
     lines.append(f"- 平均情緒指數: {avg_sentiment}（{_label_sentiment(avg_sentiment)}）")
-    lines.append(f"- 本週主趨勢: {top_topic}（{top_count} 天）")
+    lines.append(f"- 本週主趨勢: {_topic_name(top_topic)}（{top_count} 天）")
     lines.append("")
 
     lines.append("## 每週觀察")
@@ -476,7 +732,7 @@ def _write_weekly_observation_report(date_label: str) -> str:
     lines.append("## 思想連結（週摘要）")
     for idx, item in enumerate(reversed(samples), start=1):
         lines.append(
-            f"{idx}. {item['observed_date']} | {item['top_topic']} -> {item['second_topic']} | {item['key_takeaway']}"
+            f"{idx}. {item['observed_date']} | {_topic_name(item['top_topic'])} -> {_topic_name(item['second_topic'])} | {item['key_takeaway']}"
         )
 
     path.write_text("\n".join(lines), encoding="utf-8-sig")
@@ -484,7 +740,7 @@ def _write_weekly_observation_report(date_label: str) -> str:
 
 
 def generate_daily_report(report_date: str | None = None) -> dict[str, str]:
-    now = datetime.now(timezone.utc)
+    now = datetime.now().astimezone()
     date_label = report_date or now.date().isoformat()
 
     news = _fetch_news(limit=10)
@@ -497,12 +753,17 @@ def generate_daily_report(report_date: str | None = None) -> dict[str, str]:
     notes = _build_personal_notes(trends, philosophy, sentiment)
     links = _build_knowledge_links(trends, philosophy, notes)
     intersections = _build_trend_intersections(trends)
-    actions = _build_action_items(news, trends, sentiment)
-    watch_items = _build_watch_items(news)
+    source_profile = _build_source_profile(news)
+    confidence = _build_confidence_summary(news, trends, source_profile)
+    focus_items = _build_focus_event_cards(news, trends)
     second_order_impacts = _build_second_order_impact_lines(news)
 
     _upsert_observation_log(date_label, sentiment, trends, takeaways)
-    trend_pulse = _build_trend_pulse(_fetch_recent_observations(limit=3))
+    recent_observations = _fetch_recent_observations(limit=4)
+    trend_pulse = _build_trend_pulse(recent_observations[:3])
+    time_comparison = _build_time_comparison(trends, sentiment, recent_observations[1:])
+    actions = _build_action_items(news, trends, sentiment, focus_items, source_profile)
+    watch_items = _build_watch_items(news, focus_items)
 
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
     md_path = REPORT_DIR / f"daily_report_{date_label}.md"
@@ -511,9 +772,11 @@ def generate_daily_report(report_date: str | None = None) -> dict[str, str]:
     lines: list[str] = []
     lines.append(f"# 影月系統每日觀察 ({date_label})")
     lines.append("")
-    lines.append(f"- 生成時間 (UTC): {now.isoformat()}")
+    lines.append(f"- 生成時間 (Local): {now.isoformat()}")
     lines.append(f"- 新聞筆數: {len(news)}")
     lines.append(f"- 趨勢指標數: {len(trends)}")
+    lines.append(f"- 來源數: {source_profile['unique_sources']}（最高集中來源 {source_profile['top_source']} / {float(source_profile['top_source_ratio']):.0%}）")
+    lines.append(f"- 判讀信心: {confidence['label']} / {confidence['score']}")
     lines.append("")
 
     lines.append("## 每日觀察")
@@ -526,9 +789,35 @@ def generate_daily_report(report_date: str | None = None) -> dict[str, str]:
         lines.append(f"{i}. {item}")
     lines.append("")
 
+    lines.append("## 與昨日/近三日比較")
+    for i, item in enumerate(time_comparison, start=1):
+        lines.append(f"{i}. {item}")
+    lines.append("")
+
     lines.append("## 趨勢交界")
     for i, item in enumerate(intersections, start=1):
         lines.append(f"{i}. {item}")
+    lines.append("")
+
+    lines.append("## Top 3 關鍵事件")
+    for idx, item in enumerate(focus_items, start=1):
+        lines.append(f"{idx}. [{item['title']}]({item['link']})")
+        lines.append(
+            f"   - 類型: {item['event_type']} | 信心: {item['confidence_label']} ({item['confidence_score']}) | 來源: {item['source']}"
+        )
+        lines.append(f"   - 事件摘要: {item['summary']}")
+        lines.append(f"   - 二階影響: {'、'.join(item['impacts'])}")
+        lines.append(f"   - 判讀依據: {item['rationale']}")
+    if not focus_items:
+        lines.append("1. 今日沒有足夠樣本可抽出關鍵事件。")
+    lines.append("")
+
+    lines.append("## 判讀信心與資料品質")
+    lines.append(f"1. 今日整體判讀信心為 {confidence['label']}（{confidence['score']} / 100）。")
+    for idx, reason in enumerate(confidence["reasons"], start=2):
+        lines.append(f"{idx}. {reason}")
+    if float(source_profile["top_source_ratio"]) >= 0.7:
+        lines.append(f"{len(confidence['reasons']) + 2}. 單一來源集中度偏高，今天的結論應以保守解讀為主。")
     lines.append("")
 
     lines.append("## 二階影響標籤")
@@ -546,10 +835,14 @@ def generate_daily_report(report_date: str | None = None) -> dict[str, str]:
         lines.append(f"{i}. {item}")
     lines.append("")
 
-    lines.append("## 世界新聞整理")
-    for idx, item in enumerate(news, start=1):
+    lines.append("## 其餘新聞樣本")
+    focus_titles = {str(item["title"]) for item in focus_items}
+    remaining_news = [item for item in news if item["title"] not in focus_titles]
+    for idx, item in enumerate(remaining_news or news, start=1):
         lines.append(f"{idx}. [{item['title']}]({item['link']})")
-        lines.append(f"   - 來源: {item['source']} | 主題: {item['topic']} | 時間: {item['published_at']}")
+        lines.append(
+            f"   - 來源: {item['source']} | 主題: {_topic_name(item['topic'])} | 類型: {_classify_event_type(item)} | 時間: {item['published_at']}"
+        )
         lines.append(f"   - 摘要: {item['summary']}")
         lines.append(f"   - 二階影響: {'、'.join(_infer_second_order_tags(item))}")
     lines.append("")
@@ -562,7 +855,7 @@ def generate_daily_report(report_date: str | None = None) -> dict[str, str]:
 
     lines.append("## 科技趨勢分析")
     for trend in trends[:5]:
-        lines.append(f"- 趨勢占比 | {trend['bucket']}: {trend['metric_value']}%")
+        lines.append(f"- 趨勢占比 | {_topic_name(trend['bucket'])}: {trend['metric_value']}%")
     lines.append("- 技術訊號強度:")
     for signal, score in tech_signals:
         lines.append(f"  - {signal}: {score}")
@@ -605,3 +898,4 @@ def generate_daily_report(report_date: str | None = None) -> dict[str, str]:
         "weekly_observation": weekly_path,
         "thought_links": thought_links_path,
     }
+

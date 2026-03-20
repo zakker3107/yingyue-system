@@ -1,0 +1,16 @@
+services:
+  yingyue-system:
+    build:
+      context: .
+    image: yingyue-system:local
+    container_name: yingyue-system
+    ports:
+      - "8000:8000"
+    environment:
+      PORT: "8000"
+    volumes:
+      - yingyue_data:/app/data
+    restart: unless-stopped
+
+volumes:
+  yingyue_data:
